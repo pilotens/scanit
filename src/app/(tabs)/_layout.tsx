@@ -9,7 +9,7 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.inkMuted,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
@@ -19,6 +19,7 @@ export default function TabsLayout() {
         },
       }}>
       <Tabs.Screen name="index" options={{ title: 'Översikt' }} />
+      <Tabs.Screen name="scanner" options={{ title: 'Scanner' }} />
       <Tabs.Screen name="history" options={{ title: 'Historik' }} />
       <Tabs.Screen name="sensors" options={{ title: 'Sensorer' }} />
       <Tabs.Screen name="settings" options={{ title: 'Inställningar' }} />

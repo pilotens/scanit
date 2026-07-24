@@ -1,4 +1,9 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  type PressableStateCallbackType,
+} from 'react-native';
 
 import { colors, radius, spacing } from '@/constants/theme';
 
@@ -9,13 +14,18 @@ type AppButtonProps = {
   secondary?: boolean;
 };
 
-export function AppButton({ label, onPress, disabled = false, secondary = false }: AppButtonProps) {
+export function AppButton({
+  label,
+  onPress,
+  disabled = false,
+  secondary = false,
+}: AppButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }: { pressed: boolean }) => [
+      style={({ pressed }: PressableStateCallbackType) => [
         styles.button,
         secondary ? styles.secondary : styles.primary,
         pressed && !disabled && styles.pressed,
@@ -35,7 +45,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   primary: { backgroundColor: colors.primary },
-  secondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  secondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   label: { color: colors.white, fontSize: 16, fontWeight: '700' },
   secondaryLabel: { color: colors.ink },
   pressed: { opacity: 0.8 },

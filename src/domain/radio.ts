@@ -30,6 +30,16 @@ export type RawRadioFrame = {
   samples: number[];
   antennaConfigurationId: string;
   calibrationId?: string;
+  acquisition?: {
+    source: string;
+    frameRateHz?: number;
+    chirpsPerFrame?: number;
+    samplesPerChirp?: number;
+    rxMask?: number;
+    txMask?: number;
+    rawCubeShape?: number[];
+    chirpReduction?: string;
+  };
   deviceTemperatureCelsius?: number;
   imu?: {
     acceleration: Vector3;

@@ -105,7 +105,7 @@ export type ScannerComparisonResult = {
   averageRangeShiftMillimeters?: number;
   peakDisplacementDifferenceMillimeters: number;
   averageSnrDifferenceDb: number;
-  classification: 'stable' | 'changed' | 'significant-change';
+  classification: 'stable' | 'changed' | 'significant-change' | 'insufficient-quality';
   warnings: string[];
 };
 

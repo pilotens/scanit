@@ -80,9 +80,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          workspace=$(find ios -maxdepth 2 -name '*.xcworkspace' -print -quit)
+          workspace=$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)
           if [ -z "$workspace" ]; then
-            echo 'No Xcode workspace was generated.' | tee xcodebuild.log
+            echo 'No top-level Xcode workspace was generated.' | tee xcodebuild.log
             echo 'exit_code=1' >> "$GITHUB_OUTPUT"
             exit 0
           fi

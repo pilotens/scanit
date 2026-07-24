@@ -1,4 +1,4 @@
-import type { EncryptedRecordStore } from './types';
+import type { EncryptedRecordStore, StoredRecord } from './types';
 
 const records = new Map<string, string>();
 
@@ -17,22 +17,22 @@ export const encryptedStorage: EncryptedRecordStore = {
     label: 'Tillfälligt webbminne',
     description: 'Webbdemon sparar inget efter omladdning. Native-appen använder krypterad lokal lagring.',
   },
-  async get<T>(key) {
+  async get<T>(key: string): Promise<T | null> {
     const value = records.get(key);
     return value ? clone(JSON.parse(value) as T) : null;
   },
-  async set<T>(key, value) {
+  async set<T>(key: string, value: T): Promise<void> {
     records.set(key, JSON.stringify(clone(value)));
   },
-  async list<T>(prefix) {
+  async list<T>(prefix: string): Promise<StoredRecord<T>[]> {
     return [...records.entries()]
       .filter(([key]) => key.startsWith(prefix))
       .map(([key, value]) => ({ key, value: clone(JSON.parse(value) as T) }));
   },
-  async remove(key) {
+  async remove(key: string): Promise<void> {
     records.delete(key);
   },
-  async clear() {
+  async clear(): Promise<void> {
     records.clear();
   },
 };

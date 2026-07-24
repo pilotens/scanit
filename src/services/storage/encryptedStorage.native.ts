@@ -7,7 +7,7 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import * as SQLite from 'expo-sqlite';
 
-import type { EncryptedRecordStore } from './types';
+import type { EncryptedRecordStore, StoredRecord } from './types';
 
 const DATABASE_NAME = 'scanit-secure.db';
 const KEYCHAIN_KEY = 'scanit.storage.aes-key.v1';
@@ -107,7 +107,7 @@ export const encryptedStorage: EncryptedRecordStore = {
     label: 'Krypterad lokal lagring',
     description: 'AES-256-GCM med en enhetsbunden nyckel i iOS Keychain eller Android Keystore.',
   },
-  async get<T>(recordKey) {
+  async get<T>(recordKey: string): Promise<T | null> {
     const database = await getDatabase();
     const row = await database.getFirstAsync<EncryptedRow>(
       'SELECT record_key, ciphertext, schema_version FROM encrypted_records WHERE record_key = ?',
@@ -116,7 +116,7 @@ export const encryptedStorage: EncryptedRecordStore = {
 
     return row ? decrypt<T>(row.record_key, row.ciphertext, row.schema_version) : null;
   },
-  async set<T>(recordKey, value) {
+  async set<T>(recordKey: string, value: T): Promise<void> {
     const database = await getDatabase();
     const ciphertext = await encrypt(recordKey, value);
 
@@ -133,7 +133,7 @@ export const encryptedStorage: EncryptedRecordStore = {
       new Date().toISOString(),
     );
   },
-  async list<T>(prefix) {
+  async list<T>(prefix: string): Promise<StoredRecord<T>[]> {
     const database = await getDatabase();
     const rows = await database.getAllAsync<EncryptedRow>(
       `SELECT record_key, ciphertext, schema_version
@@ -150,11 +150,11 @@ export const encryptedStorage: EncryptedRecordStore = {
       })),
     );
   },
-  async remove(recordKey) {
+  async remove(recordKey: string): Promise<void> {
     const database = await getDatabase();
     await database.runAsync('DELETE FROM encrypted_records WHERE record_key = ?', recordKey);
   },
-  async clear() {
+  async clear(): Promise<void> {
     const database = await getDatabase();
     await database.runAsync('DELETE FROM encrypted_records');
     await SecureStore.deleteItemAsync(KEYCHAIN_KEY);

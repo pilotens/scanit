@@ -11,7 +11,16 @@ import type {
   ScannerRecordingManifest,
   ScannerReplayResult,
 } from '@/domain/scannerLab';
+import type {
+  ScannerBaselineComparison,
+  ScannerPersonalBaseline,
+  ScannerQualityVerdict,
+} from '@/domain/scannerSignal';
 import type { RfPosition } from '@/domain/scanning';
+import {
+  compareReplayToPersonalBaseline,
+  scannerBaselineRepository,
+} from '@/services/scanner/baseline/baselineRepository';
 import { ScannerLabRunner } from '@/services/scanner/lab/scannerLabRunner';
 import { scannerRecordingRepository } from '@/services/scanner/recording/recordingRepository';
 import { compareScannerReplays, replayScannerRecording } from '@/services/scanner/replay/replayEngine';
@@ -28,7 +37,24 @@ const classificationLabel: Record<ScannerComparisonResult['classification'], str
   stable: 'Stabil',
   changed: 'Förändrad',
   'significant-change': 'Tydlig skillnad',
+  'insufficient-quality': 'Otillräcklig kvalitet',
 };
+
+const baselineClassificationLabel: Record<ScannerBaselineComparison['classification'], string> = {
+  'within-baseline': 'Inom baslinje',
+  changed: 'Förändrad',
+  'significant-change': 'Tydlig skillnad',
+  'insufficient-quality': 'Ej jämförbar',
+};
+
+const verdictLabel: Record<ScannerQualityVerdict, string> = {
+  approved: 'Godkänd',
+  repeat: 'Upprepa',
+  rejected: 'Underkänd',
+};
+
+const levelForVerdict = (verdict: ScannerQualityVerdict) =>
+  verdict === 'approved' ? 'normal' : verdict === 'repeat' ? 'observe' : 'elevated';
 
 export function ScannerLabPanel() {
   const [position, setPosition] = useState<RfPosition>('apex');
@@ -39,10 +65,22 @@ export function ScannerLabPanel() {
   const [replay, setReplay] = useState<ScannerReplayResult | null>(null);
   const [referenceId, setReferenceId] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ScannerComparisonResult | null>(null);
+  const [baseline, setBaseline] = useState<ScannerPersonalBaseline | null>(null);
+  const [baselineComparison, setBaselineComparison] = useState<ScannerBaselineComparison | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshRecordings = async () => setRecordings(await scannerRecordingRepository.list());
+
+  const applyReplay = async (nextReplay: ScannerReplayResult) => {
+    setReplay(nextReplay);
+    const compatibleBaseline = await scannerBaselineRepository.getCompatible(nextReplay);
+    setBaseline(compatibleBaseline);
+    setBaselineComparison(
+      compatibleBaseline ? compareReplayToPersonalBaseline(compatibleBaseline, nextReplay) : null,
+    );
+  };
+
   useEffect(() => {
     void refreshRecordings().catch((caught) =>
       setError(caught instanceof Error ? caught.message : 'Kunde inte läsa scannerinspelningar.'),
@@ -67,7 +105,7 @@ export function ScannerLabPanel() {
         },
         setProgress,
       );
-      setReplay(result.replay);
+      await applyReplay(result.replay);
       setLabel('');
       await refreshRecordings();
     } catch (caught) {
@@ -81,7 +119,7 @@ export function ScannerLabPanel() {
     setBusy(true);
     setError(null);
     try {
-      setReplay(replayScannerRecording(await scannerRecordingRepository.load(id)));
+      await applyReplay(replayScannerRecording(await scannerRecordingRepository.load(id)));
       setComparison(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Replay misslyckades.');
@@ -116,6 +154,21 @@ export function ScannerLabPanel() {
     }
   };
 
+  const addReplayToBaseline = async () => {
+    if (!replay) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await scannerBaselineRepository.addReplay(replay);
+      setBaseline(updated);
+      setBaselineComparison(compareReplayToPersonalBaseline(updated, replay));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Baslinjen kunde inte uppdateras.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeRecording = (recording: ScannerRecordingManifest) => {
     Alert.alert(
       'Radera scannerinspelning?',
@@ -128,7 +181,11 @@ export function ScannerLabPanel() {
           onPress: () => {
             void scannerRecordingRepository.remove(recording.id).then(async () => {
               if (referenceId === recording.id) setReferenceId(null);
-              if (replay?.recordingId === recording.id) setReplay(null);
+              if (replay?.recordingId === recording.id) {
+                setReplay(null);
+                setBaseline(null);
+                setBaselineComparison(null);
+              }
               await refreshRecordings();
             });
           },
@@ -139,12 +196,14 @@ export function ScannerLabPanel() {
 
   const chartValues = useMemo(() => {
     const samples = replay?.samples.slice(-40) ?? [];
-    const raw = samples.map((sample) =>
-      Math.abs(sample.displacementMillimeters ?? sample.motionScore),
-    );
+    const raw = samples.map((sample) => Math.abs(sample.displacementMillimeters ?? sample.motionScore));
     const maximum = Math.max(...raw, 0.0001);
     return raw.map((value) => value / maximum);
   }, [replay]);
+
+  const baselineAlreadyContainsReplay = Boolean(
+    replay && baseline?.sourceRecordingIds.includes(replay.recordingId),
+  );
 
   return (
     <>
@@ -152,12 +211,12 @@ export function ScannerLabPanel() {
         <View style={styles.header}>
           <View style={styles.copy}>
             <Text style={styles.eyebrow}>SCANNER LAB</Text>
-            <Text style={styles.title}>Spela in, återspela och jämför rå RF-data</Text>
+            <Text style={styles.title}>Spela in, kvalitetssäkra och jämför rå RF-data</Text>
           </View>
           <StatusPill level={busy ? 'observe' : 'normal'} label={busy ? 'Arbetar' : 'Redo'} />
         </View>
         <Text style={styles.body}>
-          Varje session sparar originalpaketen. Nya signalalgoritmer kan därför testas mot samma mätning utan att scannern är ansluten.
+          Varje session sparar originalpaketen. Kvalitetsgrinden körs före fysiologisk bandanalys och personlig baslinje.
         </Text>
       </Card>
 
@@ -212,37 +271,96 @@ export function ScannerLabPanel() {
       </Card>
 
       {replay ? (
-        <Card>
-          <View style={styles.header}>
-            <View style={styles.copy}>
-              <Text style={styles.sectionTitle}>Replay: {replay.manifest.label}</Text>
-              <Text style={styles.meta}>{replay.processingVersion} · {replay.summary.processedFrameCount} analyserade frames</Text>
+        <>
+          <Card>
+            <View style={styles.header}>
+              <View style={styles.copy}>
+                <Text style={styles.sectionTitle}>Kvalitetsgrind</Text>
+                <Text style={styles.meta}>{replay.qualityGate.version} · pipeline {replay.processingVersion}</Text>
+              </View>
+              <StatusPill level={levelForVerdict(replay.qualityGate.verdict)} label={`${verdictLabel[replay.qualityGate.verdict]} ${replay.qualityGate.score}/100`} />
             </View>
-            <StatusPill level={replay.summary.dominantSignalQuality === 'poor' ? 'elevated' : 'normal'} label={replay.summary.dominantSignalQuality} />
-          </View>
-          <View style={styles.metrics}>
-            <Metric label="SNR" value={`${replay.summary.averageSignalToNoiseRatioDb.toFixed(1)} dB`} />
-            <Metric label="Peakrörelse" value={`${replay.summary.peakDisplacementMillimeters.toFixed(3)} mm`} />
-            <Metric label="Range" value={replay.summary.averageTargetRangeMeters === undefined ? '–' : `${(replay.summary.averageTargetRangeMeters * 100).toFixed(1)} cm`} />
-          </View>
-          <Text style={styles.label}>SENASTE MIKRORÖRELSEFRAMES</Text>
-          <View style={styles.chart}>
-            {chartValues.map((value, index) => (
-              <View key={`${index}-${value}`} style={[styles.chartBar, { height: Math.max(3, value * 72) }]} />
+            <Text style={styles.body}>{replay.qualityGate.recommendedAction}</Text>
+            {replay.qualityGate.metrics.map((metric) => (
+              <View style={styles.qualityRow} key={metric.id}>
+                <View style={styles.copy}>
+                  <Text style={styles.qualityTitle}>{metric.passed ? '✓' : metric.blocking ? '×' : '!'} {metric.label}</Text>
+                  <Text style={styles.meta}>{metric.detail}</Text>
+                </View>
+                <Text style={metric.passed ? styles.scoreGood : metric.blocking ? styles.scoreBad : styles.scoreWarn}>
+                  {Math.round(metric.score * 100)}
+                </Text>
+              </View>
             ))}
-          </View>
-          {replay.summary.qualityFlags.length ? (
-            <Text style={styles.warning}>Kvalitetsflaggor: {replay.summary.qualityFlags.join(', ')}</Text>
-          ) : null}
-        </Card>
+          </Card>
+
+          <Card>
+            <View style={styles.header}>
+              <View style={styles.copy}>
+                <Text style={styles.sectionTitle}>Replay: {replay.manifest.label}</Text>
+                <Text style={styles.meta}>{replay.summary.processedFrameCount} analyserade frames · {replay.qualityGate.durationSeconds.toFixed(1)} s</Text>
+              </View>
+              <StatusPill level={replay.physiology.reliable ? 'normal' : 'observe'} label={replay.physiology.reliable ? 'Band separerade' : 'Experimentell'} />
+            </View>
+            <View style={styles.metrics}>
+              <Metric label="SNR" value={`${replay.summary.averageSignalToNoiseRatioDb.toFixed(1)} dB`} />
+              <Metric label="Peakrörelse" value={`${replay.summary.peakDisplacementMillimeters.toFixed(3)} mm`} />
+              <Metric label="Range" value={replay.summary.averageTargetRangeMeters === undefined ? '–' : `${(replay.summary.averageTargetRangeMeters * 100).toFixed(1)} cm`} />
+              <Metric label="Andningsband" value={replay.physiology.respiratoryRateBpm === undefined ? '–' : `${replay.physiology.respiratoryRateBpm.toFixed(1)}/min`} />
+              <Metric label="Mekaniskt hjärtband" value={replay.physiology.cardiacMechanicalRateBpm === undefined ? '–' : `${replay.physiology.cardiacMechanicalRateBpm.toFixed(1)}/min`} />
+              <Metric label="Separation" value={`${Math.round(replay.physiology.separationConfidence * 100)}%`} />
+            </View>
+            <Text style={styles.label}>RÅ MIKRORÖRELSE</Text>
+            <TraceChart values={chartValues} />
+            <Text style={styles.label}>SEPARERAT ANDNINGSBAND</Text>
+            <TraceChart values={replay.physiology.respirationTrace} />
+            <Text style={styles.label}>SEPARERAT MEKANISKT HJÄRTBAND</Text>
+            <TraceChart values={replay.physiology.cardiacTrace} />
+            {replay.summary.qualityFlags.length ? (
+              <Text style={styles.warning}>Kvalitetsflaggor: {replay.summary.qualityFlags.join(', ')}</Text>
+            ) : null}
+            <Text style={styles.disclaimer}>Bandfrekvenser beskriver periodiska RF-rörelser och är inte en medicinsk puls- eller andningsdiagnos.</Text>
+          </Card>
+
+          <Card muted>
+            <View style={styles.header}>
+              <View style={styles.copy}>
+                <Text style={styles.sectionTitle}>Personlig RF-baslinje</Text>
+                <Text style={styles.meta}>
+                  {baseline ? `${baseline.sourceCount} godkända mätningar för ${baseline.position}` : 'Ingen kompatibel baslinje ännu'}
+                </Text>
+              </View>
+              {baselineComparison ? (
+                <StatusPill
+                  level={baselineComparison.classification === 'within-baseline' ? 'normal' : baselineComparison.classification === 'changed' ? 'observe' : 'elevated'}
+                  label={baselineClassificationLabel[baselineComparison.classification]}
+                />
+              ) : null}
+            </View>
+            <AppButton
+              label={baselineAlreadyContainsReplay ? 'Mätningen finns i baslinjen' : 'Lägg godkänd mätning till baslinje'}
+              onPress={() => void addReplayToBaseline()}
+              secondary
+              disabled={busy || baselineAlreadyContainsReplay || replay.qualityGate.verdict !== 'approved'}
+            />
+            {baselineComparison ? (
+              <View style={styles.baselineFacts}>
+                <Text style={styles.body}>Profilslikhet: {(baselineComparison.profileCosineSimilarity * 100).toFixed(1)}%</Text>
+                <Text style={styles.body}>Rangeavvikelse: {baselineComparison.rangeDeviationMillimeters === undefined ? '–' : `${baselineComparison.rangeDeviationMillimeters.toFixed(1)} mm`}</Text>
+                <Text style={styles.body}>Mekanisk rate-avvikelse: {baselineComparison.cardiacRateDeviationBpm === undefined ? '–' : `${baselineComparison.cardiacRateDeviationBpm.toFixed(1)}/min`}</Text>
+                {baselineComparison.warnings.map((warning) => <Text key={warning} style={styles.warning}>{warning}</Text>)}
+              </View>
+            ) : null}
+          </Card>
+        </>
       ) : null}
 
       {comparison ? (
         <Card muted>
           <View style={styles.header}>
-            <Text style={styles.sectionTitle}>Differensanalys</Text>
+            <Text style={styles.sectionTitle}>Direkt differensanalys</Text>
             <StatusPill
-              level={comparison.classification === 'stable' ? 'normal' : comparison.classification === 'changed' ? 'observe' : 'elevated'}
+              level={comparison.classification === 'stable' ? 'normal' : comparison.classification === 'changed' || comparison.classification === 'insufficient-quality' ? 'observe' : 'elevated'}
               label={classificationLabel[comparison.classification]}
             />
           </View>
@@ -301,6 +419,20 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function TraceChart({ values }: { values: number[] }) {
+  const maximum = Math.max(...values.map((value) => Math.abs(value)), 0.0001);
+  return (
+    <View style={styles.chart}>
+      {values.length ? values.map((value, index) => (
+        <View
+          key={`${index}-${value}`}
+          style={[styles.chartBar, { height: Math.max(3, (Math.abs(value) / maximum) * 72) }]}
+        />
+      )) : <Text style={styles.meta}>Ingen tillförlitlig bandserie kunde extraheras.</Text>}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   labHero: { backgroundColor: '#EEF2FA' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md },
@@ -322,13 +454,20 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.border },
   progressFill: { height: 8, backgroundColor: colors.primary },
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  metric: { flex: 1, minWidth: 90, backgroundColor: colors.surfaceMuted, padding: spacing.md, borderRadius: radius.md },
+  metric: { flex: 1, minWidth: 110, backgroundColor: colors.surfaceMuted, padding: spacing.md, borderRadius: radius.md },
   metricLabel: { color: colors.inkMuted, fontSize: 10, marginBottom: spacing.xs },
   metricValue: { color: colors.ink, fontSize: 16, fontWeight: '700' },
-  chart: { height: 84, flexDirection: 'row', alignItems: 'flex-end', gap: 2, padding: spacing.sm, backgroundColor: colors.surfaceMuted, borderRadius: radius.md },
+  chart: { minHeight: 84, flexDirection: 'row', alignItems: 'flex-end', gap: 2, padding: spacing.sm, backgroundColor: colors.surfaceMuted, borderRadius: radius.md },
   chartBar: { flex: 1, borderRadius: 2, backgroundColor: colors.primary },
+  qualityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: spacing.sm },
+  qualityTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
+  scoreGood: { color: colors.primary, fontSize: 17, fontWeight: '800' },
+  scoreWarn: { color: colors.elevated, fontSize: 17, fontWeight: '800' },
+  scoreBad: { color: colors.urgent, fontSize: 17, fontWeight: '800' },
+  baselineFacts: { gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface },
   warning: { color: colors.elevated, fontSize: 12, lineHeight: 18 },
   error: { color: colors.urgent, fontSize: 12, lineHeight: 18 },
+  disclaimer: { color: colors.inkMuted, fontSize: 11, lineHeight: 17, fontStyle: 'italic' },
   recording: { gap: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: spacing.md },
   recordingTitle: { color: colors.ink, fontSize: 15, fontWeight: '700' },
 });

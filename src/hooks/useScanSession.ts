@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { ScanProgressEvent, ScanSession } from '@/domain/scanning';
 import { ScanCoordinator } from '@/services/scanning/scanCoordinator';
+import { ImportedWearableProvider } from '@/services/sensors/importedWearable';
 import { MockRfScannerProvider } from '@/services/sensors/mockRfScanner';
 import { MockWearableProvider } from '@/services/sensors/mockWearable';
 import { useAppState } from '@/state/AppProvider';
@@ -14,7 +15,7 @@ const idleProgress: ScanProgressEvent = {
 };
 
 export function useScanSession() {
-  const { baseline, addScanSession } = useAppState();
+  const { baseline, latestVitals, addScanSession } = useAppState();
   const [progress, setProgress] = useState<ScanProgressEvent>(idleProgress);
   const [result, setResult] = useState<ScanSession | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,11 +23,14 @@ export function useScanSession() {
   const coordinator = useMemo(
     () =>
       new ScanCoordinator({
-        wearable: new MockWearableProvider(),
+        wearable:
+          latestVitals.source === 'healthkit'
+            ? new ImportedWearableProvider(latestVitals)
+            : new MockWearableProvider(),
         rfScanner: new MockRfScannerProvider(),
         baseline,
       }),
-    [baseline],
+    [baseline, latestVitals],
   );
 
   const start = useCallback(async () => {

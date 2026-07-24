@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -49,3 +49,9 @@ jobs:
 
       - name: Export web build
         run: npx expo export --platform web
+
+      - name: Validate Expo configuration
+        run: npx expo config --type public
+
+      - name: Generate iOS project
+        run: npx expo prebuild --platform ios --no-install --clean

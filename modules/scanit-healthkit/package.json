@@ -1,0 +1,17 @@
+{
+  "name": "scanit-healthkit",
+  "version": "0.1.0",
+  "description": "Read-only HealthKit bridge for ScanIt",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true,
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "dependencies": {
+    "expo-modules-core": "*"
+  }
+}

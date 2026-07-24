@@ -95,17 +95,19 @@ export class ScannerLabRunner {
       hardwareProfileId = 'infineon-bgt60tr13c';
     } else {
       const sessionId = `lab-emulator-${Date.now()}-${options.position}`;
+      const startTimestampNs = BigInt(Date.now()) * 1_000_000n;
+      const frameIntervalNs = BigInt(Math.round(1_000_000_000 / targetFrameRateHz));
       frames = [];
       for (let sequence = 0; sequence < targetFrames; sequence += 1) {
-        frames.push(
-          generateSyntheticRadioFrame({
-            sessionId,
-            sequence,
-            position: options.position,
-            elapsedSeconds: sequence / targetFrameRateHz,
-            motionScale: sequence < calibrationFrames ? 0 : 1,
-          }),
-        );
+        const frame = generateSyntheticRadioFrame({
+          sessionId,
+          sequence,
+          position: options.position,
+          elapsedSeconds: sequence / targetFrameRateHz,
+          motionScale: sequence < calibrationFrames ? 0 : 1,
+        });
+        frame.timestampNs = String(startTimestampNs + BigInt(sequence) * frameIntervalNs);
+        frames.push(frame);
         if (sequence % 12 === 0 || sequence === targetFrames - 1) {
           progress(onProgress, {
             phase: 'capturing',

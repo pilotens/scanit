@@ -23,8 +23,29 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund --loglevel=error
 
-      - name: Type-check
-        run: npm run typecheck
+      - name: Capture type-check result
+        id: typecheck
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > typecheck.log 2>&1
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cat typecheck.log
+          exit 0
+
+      - name: Upload type-check diagnostics
+        if: steps.typecheck.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail on type errors
+        if: steps.typecheck.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Export web build
         run: npx expo export --platform web

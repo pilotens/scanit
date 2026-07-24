@@ -26,6 +26,8 @@ The output is one of:
 
 A weighted score never overrides a blocking condition. Examples of blocking conditions include very low SNR, excessive packet loss, severe phase discontinuity, excessive device movement or too few usable frames.
 
+The current thresholds are engineering defaults for development. They are not clinical thresholds and must be recalibrated against physical measurements.
+
 ## Physiological band separation v1
 
 `scanner-physiology-v1` does not assume that the strongest reflection comes from the heart. It:

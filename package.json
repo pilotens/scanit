@@ -1,6 +1,6 @@
 {
   "name": "scanit-mobile",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -8,6 +8,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "prebuild:ios": "expo prebuild --platform ios --clean",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },
@@ -27,7 +28,8 @@
     "react-native": "0.86.0",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "scanit-healthkit": "file:./modules/scanit-healthkit"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

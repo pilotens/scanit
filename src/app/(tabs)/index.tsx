@@ -12,10 +12,21 @@ import { colors, spacing } from '@/constants/theme';
 import { useAppState } from '@/state/AppProvider';
 import { formatDateTime } from '@/utils/format';
 
+const measurement = (
+  value: number | null | undefined,
+  suffix = '',
+  decimals = 0,
+) => (value === null || value === undefined ? '–' : `${value.toFixed(decimals)}${suffix}`);
+
 export default function DashboardScreen() {
-  const { latestVitals, baseline, sessions, sensors } = useAppState();
+  const { latestVitals, baseline, sessions, sensors, healthKitImport } = useAppState();
   const latestAssessment = sessions[0]?.assessment;
   const connectedSensors = sensors.filter((sensor) => sensor.status === 'connected').length;
+  const hrvValue = latestVitals.hrvSdnnMs ?? latestVitals.hrvRmssdMs;
+  const hrvMethod = latestVitals.hrvSdnnMs !== null && latestVitals.hrvSdnnMs !== undefined
+    ? 'SDNN'
+    : 'RMSSD';
+  const sourceLabel = latestVitals.source === 'healthkit' ? 'Apple Health' : 'Simulator';
 
   return (
     <Screen
@@ -36,47 +47,69 @@ export default function DashboardScreen() {
         <AppButton label="Starta utvidgad skanning" onPress={() => router.push('/scan')} />
       </Card>
 
-      <SectionHeader title="Klockdata" detail={`Uppdaterad ${formatDateTime(latestVitals.timestamp)}`} />
+      <SectionHeader
+        title={`Klockdata · ${sourceLabel}`}
+        detail={`Uppdaterad ${formatDateTime(latestVitals.timestamp)}`}
+      />
       <View style={styles.metricsRow}>
         <MetricCard
           label="Puls"
-          value={`${latestVitals.heartRateBpm}`}
+          value={measurement(latestVitals.heartRateBpm)}
           detail={`Baslinje ${baseline.restingHeartRateBpm} bpm`}
         />
         <MetricCard
           label="SpO₂"
-          value={`${latestVitals.oxygenSaturationPercent}%`}
+          value={measurement(latestVitals.oxygenSaturationPercent, '%', 1)}
           detail={`Baslinje ${baseline.oxygenSaturationPercent}%`}
         />
       </View>
       <View style={styles.metricsRow}>
         <MetricCard
-          label="HRV"
-          value={`${latestVitals.hrvRmssdMs} ms`}
-          detail={`Baslinje ${baseline.hrvRmssdMs} ms`}
+          label={`HRV · ${hrvMethod}`}
+          value={measurement(hrvValue, ' ms', 1)}
+          detail={
+            hrvMethod === 'RMSSD'
+              ? `RMSSD-baslinje ${baseline.hrvRmssdMs} ms`
+              : baseline.hrvSdnnMs
+                ? `SDNN-baslinje ${baseline.hrvSdnnMs} ms`
+                : 'SDNN-baslinje byggs senare'
+          }
         />
         <MetricCard
-          label="Hudtemperatur"
-          value={`${latestVitals.skinTemperatureCelsius.toFixed(1)}°`}
-          detail={`Baslinje ${baseline.skinTemperatureCelsius.toFixed(1)}°`}
+          label="Handledstemperatur"
+          value={measurement(latestVitals.skinTemperatureCelsius, '°', 1)}
+          detail={
+            latestVitals.source === 'healthkit'
+              ? 'Senaste tillgängliga sömnmätning'
+              : `Baslinje ${baseline.skinTemperatureCelsius.toFixed(1)}°`
+          }
         />
       </View>
 
       <SectionHeader title="Systemstatus" />
       <Card>
         <View style={styles.statusRow}>
-          <View>
+          <View style={styles.statusCopy}>
             <Text style={styles.cardTitle}>{connectedSensors} av {sensors.length} moduler anslutna</Text>
-            <Text style={styles.cardBody}>Klocka, telefon och RF-scanner arbetar som separata datakällor.</Text>
+            <Text style={styles.cardBody}>
+              {healthKitImport
+                ? `${healthKitImport.electrocardiograms.length} EKG-sammanfattningar finns lokalt från Apple Health.`
+                : 'Klocka, telefon och RF-scanner arbetar som separata datakällor.'}
+            </Text>
           </View>
-          <StatusPill level="normal" label="Demo" />
+          <StatusPill
+            level="normal"
+            label={latestVitals.source === 'healthkit' ? 'HealthKit' : 'Demo'}
+          />
         </View>
       </Card>
 
       <Card muted>
         <Text style={styles.warningTitle}>Forskningsprototyp</Text>
         <Text style={styles.warningBody}>
-          Alla sensorvärden är simulerade. Appen diagnostiserar eller utesluter inte hjärtinfarkt och får inte försena kontakt med vården.
+          {latestVitals.source === 'healthkit'
+            ? 'Klockvärdena är verkliga importerade sammanfattningar, men RF-modulen och riskmodellen är fortfarande simulerade. Appen diagnostiserar eller utesluter inte sjukdom.'
+            : 'Klock- och RF-värden är simulerade. Appen diagnostiserar eller utesluter inte hjärtinfarkt och får inte försena kontakt med vården.'}
         </Text>
       </Card>
     </Screen>
@@ -92,8 +125,9 @@ const styles = StyleSheet.create({
   heroBody: { color: colors.inkMuted, fontSize: 14, lineHeight: 21 },
   metricsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   statusRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
+  statusCopy: { flex: 1 },
   cardTitle: { color: colors.ink, fontSize: 16, fontWeight: '700' },
-  cardBody: { color: colors.inkMuted, fontSize: 13, lineHeight: 19, marginTop: spacing.xs, maxWidth: 260 },
+  cardBody: { color: colors.inkMuted, fontSize: 13, lineHeight: 19, marginTop: spacing.xs },
   warningTitle: { color: colors.ink, fontSize: 15, fontWeight: '700' },
   warningBody: { color: colors.inkMuted, fontSize: 13, lineHeight: 19 },
 });

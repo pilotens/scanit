@@ -17,6 +17,8 @@ export default function RootLayout() {
             headerTintColor: colors.ink,
             contentStyle: { backgroundColor: colors.background },
           }}>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="onboarding" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
             name="scan"

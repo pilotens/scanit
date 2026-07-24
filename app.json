@@ -2,7 +2,7 @@
   "expo": {
     "name": "ScanIt",
     "slug": "scanit",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "scheme": "scanit",
     "userInterfaceStyle": "light",
@@ -25,6 +25,12 @@
         {
           "configureAndroidBackup": true,
           "faceIDPermission": "Tillåt ScanIt att skydda lokal hälsodata med enhetens säkerhet."
+        }
+      ],
+      [
+        "./modules/scanit-healthkit/app.plugin.js",
+        {
+          "healthSharePermission": "ScanIt läser puls, HRV, syremättnad, handledstemperatur och EKG från Apple Health för att skapa en personlig forskningsöversikt."
         }
       ]
     ],

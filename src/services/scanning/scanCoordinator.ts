@@ -46,19 +46,25 @@ const rankToQuality = (rank: number): SignalQuality => {
 };
 
 const deriveAssessment = (
-  heartRateBpm: number,
-  oxygenSaturationPercent: number,
-  hrvRmssdMs: number,
+  heartRateBpm: number | null,
+  oxygenSaturationPercent: number | null,
+  hrvRmssdMs: number | null,
   observations: RfObservation[],
   baseline: PersonalBaseline,
 ): RiskAssessment => {
-  const heartRateDelta = Math.abs(heartRateBpm - baseline.restingHeartRateBpm);
-  const hrvDelta = Math.max(0, baseline.hrvRmssdMs - hrvRmssdMs);
-  const oxygenPenalty = Math.max(0, 97 - oxygenSaturationPercent) * 8;
+  const heartRateDelta =
+    heartRateBpm === null ? 0 : Math.abs(heartRateBpm - baseline.restingHeartRateBpm);
+  const hrvDelta =
+    hrvRmssdMs === null ? 0 : Math.max(0, baseline.hrvRmssdMs - hrvRmssdMs);
+  const oxygenPenalty =
+    oxygenSaturationPercent === null ? 0 : Math.max(0, 97 - oxygenSaturationPercent) * 8;
   const rfDelta = observations.length
     ? observations.reduce((sum, item) => sum + item.baselineDelta, 0) / observations.length
     : 0;
 
+  const missingWearableValues = [heartRateBpm, oxygenSaturationPercent, hrvRmssdMs].filter(
+    (value) => value === null,
+  ).length;
   const rawScore = 12 + heartRateDelta * 1.4 + hrvDelta * 0.8 + oxygenPenalty + rfDelta * 120;
   const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
@@ -68,33 +74,42 @@ const deriveAssessment = (
   else if (score >= 30) level = 'observe';
 
   const titles: Record<RiskLevel, string> = {
-    normal: 'Inga tydliga avvikelser i demodata',
-    observe: 'Mindre avvikelse från simulerad baslinje',
-    elevated: 'Flera simulerade signaler avviker',
-    urgent: 'Demomodellen markerar en tydlig avvikelse',
+    normal: 'Inga tydliga avvikelser i prototypdata',
+    observe: 'Mindre avvikelse från personlig baslinje',
+    elevated: 'Flera prototypsignaler avviker',
+    urgent: 'Prototypmodellen markerar en tydlig avvikelse',
   };
 
   return {
     level,
     score,
-    confidence: 0.82,
+    confidence: Math.max(0.35, 0.82 - missingWearableValues * 0.12),
     title: titles[level],
     summary:
       level === 'normal'
-        ? 'Klock- och RF-signalerna ligger nära den simulerade personliga baslinjen.'
+        ? 'Tillgängliga klock- och RF-signaler ligger nära den personliga baslinjen.'
         : 'Resultatet behöver kontrolleras med en ny mätning och får inte användas som diagnos.',
     evidence: [
       {
         id: 'heart-rate',
         label: 'Puls mot baslinje',
-        value: `${heartRateBpm} bpm (${heartRateDelta >= 1 ? '+' : ''}${heartRateBpm - baseline.restingHeartRateBpm})`,
-        contribution: heartRateDelta > 15 ? 'concerning' : 'reassuring',
+        value:
+          heartRateBpm === null
+            ? 'Mätvärde saknas'
+            : `${heartRateBpm} bpm (${heartRateBpm - baseline.restingHeartRateBpm >= 0 ? '+' : ''}${heartRateBpm - baseline.restingHeartRateBpm})`,
+        contribution:
+          heartRateBpm === null ? 'neutral' : heartRateDelta > 15 ? 'concerning' : 'reassuring',
       },
       {
         id: 'oxygen',
         label: 'Syremättnad',
-        value: `${oxygenSaturationPercent}%`,
-        contribution: oxygenSaturationPercent < 95 ? 'concerning' : 'reassuring',
+        value: oxygenSaturationPercent === null ? 'Mätvärde saknas' : `${oxygenSaturationPercent}%`,
+        contribution:
+          oxygenSaturationPercent === null
+            ? 'neutral'
+            : oxygenSaturationPercent < 95
+              ? 'concerning'
+              : 'reassuring',
       },
       {
         id: 'rf-delta',
@@ -105,7 +120,7 @@ const deriveAssessment = (
     ],
     generatedAt: new Date().toISOString(),
     medicalDisclaimer:
-      'Prototyp med simulerade data. Resultatet kan inte diagnostisera eller utesluta hjärtinfarkt.',
+      'Forskningsprototyp. Resultatet kan inte diagnostisera eller utesluta hjärtinfarkt.',
   };
 };
 
@@ -178,6 +193,8 @@ export class ScanCoordinator {
       (rfObservations.length + 1);
 
     const completedAt = new Date().toISOString();
+    const sessionIsSimulated =
+      wearableSnapshot.isSimulated || rfObservations.some((observation) => observation.isSimulated);
     const session: ScanSession = {
       id: `scan-${Date.now()}`,
       startedAt,
@@ -188,10 +205,12 @@ export class ScanCoordinator {
       assessment,
       overallSignalQuality: rankToQuality(averageQuality),
       notes: [
-        'All sensorvärden i denna version är simulerade.',
+        wearableSnapshot.source === 'healthkit'
+          ? 'Klockvärden importerades från Apple Health och är inte synkroniserade råsignaler.'
+          : 'Klockvärden kommer från simulatorn.',
         'RF-kartan beskriver relativ signalrespons, inte verifierad anatomi.',
       ],
-      isSimulated: true,
+      isSimulated: sessionIsSimulated,
     };
 
     options.onProgress({

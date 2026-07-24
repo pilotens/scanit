@@ -10,9 +10,12 @@ export const currentVitals: VitalSnapshot = {
   heartRateBpm: 67,
   oxygenSaturationPercent: 98,
   hrvRmssdMs: 44,
+  hrvSdnnMs: null,
   skinTemperatureCelsius: 33.4,
   motionState: 'still',
   signalQuality: 'excellent',
+  source: 'simulation',
+  sourceName: 'ScanIt Watch Simulator',
   isSimulated: true,
 };
 

@@ -1,15 +1,19 @@
 export type RiskLevel = 'normal' | 'observe' | 'elevated' | 'urgent';
 export type SignalQuality = 'poor' | 'fair' | 'good' | 'excellent';
-export type MotionState = 'still' | 'light-motion' | 'active';
+export type MotionState = 'still' | 'light-motion' | 'active' | 'unknown';
+export type VitalSource = 'simulation' | 'healthkit' | 'wearable';
 
 export type VitalSnapshot = {
   timestamp: string;
-  heartRateBpm: number;
-  oxygenSaturationPercent: number;
-  hrvRmssdMs: number;
-  skinTemperatureCelsius: number;
+  heartRateBpm: number | null;
+  oxygenSaturationPercent: number | null;
+  hrvRmssdMs: number | null;
+  hrvSdnnMs?: number | null;
+  skinTemperatureCelsius: number | null;
   motionState: MotionState;
   signalQuality: SignalQuality;
+  source: VitalSource;
+  sourceName?: string;
   isSimulated: boolean;
 };
 
@@ -17,6 +21,7 @@ export type PersonalBaseline = {
   restingHeartRateBpm: number;
   oxygenSaturationPercent: number;
   hrvRmssdMs: number;
+  hrvSdnnMs?: number;
   skinTemperatureCelsius: number;
   sampleDays: number;
   updatedAt: string;

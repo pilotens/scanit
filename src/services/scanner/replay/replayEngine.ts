@@ -5,7 +5,9 @@ import type {
   ScannerReplayResult,
 } from '@/domain/scannerLab';
 
+import { separateScannerPhysiology } from '../processing/physiology';
 import { ScannerSignalPipeline } from '../processing/pipeline';
+import { evaluateScannerSignalQuality } from '../quality/signalQualityEngine';
 
 const mean = (values: number[]) =>
   values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
@@ -35,25 +37,36 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
   const calibrationCount = Math.max(4, Math.min(manifest.calibrationFrameCount, frames.length - 2));
   const pipeline = new ScannerSignalPipeline();
   const calibration = pipeline.calibrate(frames.slice(0, calibrationCount), manifest.hardwareProfileId);
-  const analyses = frames.slice(calibrationCount).map((frame) => ({
+  const activeFrames = frames.slice(calibrationCount);
+  const analyses = activeFrames.map((frame) => ({
     frame,
     analysis: pipeline.process(frame),
   }));
   if (!analyses.length) throw new Error('Recording contains no frames after calibration.');
 
+  const qualityGate = evaluateScannerSignalQuality(
+    activeFrames,
+    analyses.map(({ analysis }) => analysis),
+  );
+  const physiology = separateScannerPhysiology(activeFrames, qualityGate);
   const ranges = analyses.flatMap(({ analysis }) =>
     analysis.targetRangeMeters === undefined ? [] : [analysis.targetRangeMeters],
   );
   const displacements = analyses.flatMap(({ analysis }) =>
     analysis.displacementMillimeters === undefined ? [] : [Math.abs(analysis.displacementMillimeters)],
   );
-  const qualityFlags = [...new Set(analyses.flatMap(({ analysis }) => analysis.qualityFlags))];
+  const qualityFlags = [
+    ...new Set([
+      ...analyses.flatMap(({ analysis }) => analysis.qualityFlags),
+      ...physiology.qualityFlags,
+    ]),
+  ];
   const averageQuality = mean(analyses.map(({ analysis }) => qualityRank[analysis.signalQuality]));
 
   return {
     recordingId: manifest.id,
     processedAt: new Date().toISOString(),
-    processingVersion: 'scanner-pipeline-v1',
+    processingVersion: 'scanner-pipeline-v2',
     manifest,
     calibration,
     samples: analyses.map(({ frame, analysis }) => ({
@@ -67,6 +80,8 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
       qualityFlags: analysis.qualityFlags,
     })),
     profile: analyses.at(-1)!.analysis.normalizedProfile,
+    qualityGate,
+    physiology,
     summary: {
       processedFrameCount: analyses.length,
       averageSignalToNoiseRatioDb: mean(
@@ -127,10 +142,25 @@ export function compareScannerReplays(
   if (reference.manifest.modality !== candidate.manifest.modality) {
     warnings.push('Inspelningarna använder olika radiotekniker.');
   }
+  if (reference.qualityGate.verdict !== 'approved') {
+    warnings.push('Referensmätningens signalkvalitet är inte godkänd.');
+  }
+  if (candidate.qualityGate.verdict !== 'approved') {
+    warnings.push('Kandidatmätningens signalkvalitet är inte godkänd.');
+  }
 
   const rangeShift = averageRangeShiftMillimeters ?? 0;
-  let classification: ScannerComparisonResult['classification'] = 'stable';
-  if (profileCosineSimilarity < 0.82 || rangeShift > 30 || peakDisplacementDifferenceMillimeters > 1) {
+  let classification: ScannerComparisonResult['classification'];
+  if (
+    reference.qualityGate.verdict !== 'approved' ||
+    candidate.qualityGate.verdict !== 'approved'
+  ) {
+    classification = 'insufficient-quality';
+  } else if (
+    profileCosineSimilarity < 0.82 ||
+    rangeShift > 30 ||
+    peakDisplacementDifferenceMillimeters > 1
+  ) {
     classification = 'significant-change';
   } else if (
     profileCosineSimilarity < 0.94 ||
@@ -138,6 +168,8 @@ export function compareScannerReplays(
     peakDisplacementDifferenceMillimeters > 0.35
   ) {
     classification = 'changed';
+  } else {
+    classification = 'stable';
   }
 
   return {

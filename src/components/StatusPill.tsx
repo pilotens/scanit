@@ -8,6 +8,11 @@ type StatusPillProps = {
   label?: string;
 };
 
+type StatusPalette = {
+  backgroundColor: string;
+  foregroundColor: string;
+};
+
 const labels: Record<RiskLevel, string> = {
   normal: 'Stabil',
   observe: 'Observera',
@@ -15,11 +20,22 @@ const labels: Record<RiskLevel, string> = {
   urgent: 'Akut signal',
 };
 
+const palettes: Record<RiskLevel, StatusPalette> = {
+  normal: { backgroundColor: '#E2F2ED', foregroundColor: colors.normal },
+  observe: { backgroundColor: '#F5EFD9', foregroundColor: colors.observe },
+  elevated: { backgroundColor: '#F8E7DE', foregroundColor: colors.elevated },
+  urgent: { backgroundColor: '#F7E1E3', foregroundColor: colors.urgent },
+};
+
 export function StatusPill({ level, label }: StatusPillProps) {
+  const palette = palettes[level];
+
   return (
-    <View style={[styles.pill, styles[level]]}>
-      <View style={[styles.dot, styles[`${level}Dot`]]} />
-      <Text style={[styles.text, styles[`${level}Text`]]}>{label ?? labels[level]}</Text>
+    <View style={[styles.pill, { backgroundColor: palette.backgroundColor }]}>
+      <View style={[styles.dot, { backgroundColor: palette.foregroundColor }]} />
+      <Text style={[styles.text, { color: palette.foregroundColor }]}>
+        {label ?? labels[level]}
+      </Text>
     </View>
   );
 }
@@ -36,16 +52,4 @@ const styles = StyleSheet.create({
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
   text: { fontSize: 13, fontWeight: '700' },
-  normal: { backgroundColor: '#E2F2ED' },
-  observe: { backgroundColor: '#F5EFD9' },
-  elevated: { backgroundColor: '#F8E7DE' },
-  urgent: { backgroundColor: '#F7E1E3' },
-  normalDot: { backgroundColor: colors.normal },
-  observeDot: { backgroundColor: colors.observe },
-  elevatedDot: { backgroundColor: colors.elevated },
-  urgentDot: { backgroundColor: colors.urgent },
-  normalText: { color: colors.normal },
-  observeText: { color: colors.observe },
-  elevatedText: { color: colors.elevated },
-  urgentText: { color: colors.urgent },
 });

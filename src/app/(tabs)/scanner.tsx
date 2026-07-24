@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
@@ -7,26 +7,95 @@ import { Screen } from '@/components/Screen';
 import { StatusPill } from '@/components/StatusPill';
 import { colors, radius, spacing } from '@/constants/theme';
 import type { ScannerCoreDiagnostic } from '@/domain/radio';
+import { ScannerGatewayClient } from '@/services/scanner/gateway/scannerGatewayClient';
+import type { ScannerGatewayStatus } from '@/services/scanner/gateway/types';
 import { scannerHardwareProfiles } from '@/services/scanner/hardwareProfiles';
+import { scannerRuntime } from '@/services/scanner/runtime/scannerRuntime';
 import { runScannerCoreDiagnostic } from '@/services/scanner/selfTest';
 
 export default function ScannerScreen() {
   const [diagnostic, setDiagnostic] = useState<ScannerCoreDiagnostic | null>(null);
+  const [gatewayUrl, setGatewayUrl] = useState('ws://192.168.4.1:8765');
+  const [gatewayStatus, setGatewayStatus] = useState<ScannerGatewayStatus | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [runtimeMode, setRuntimeMode] = useState(scannerRuntime.getState().mode);
+
+  const connectGateway = async () => {
+    setConnecting(true);
+    setConnectionError(null);
+    const client = new ScannerGatewayClient(gatewayUrl.trim());
+    try {
+      const status = await client.connect();
+      if (!status.deviceConnected) {
+        throw new Error('Gatewayen hittades men radarsensorn är inte ansluten.');
+      }
+      scannerRuntime.useGateway(gatewayUrl.trim());
+      setRuntimeMode('gateway');
+      setGatewayStatus(status);
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Kunde inte ansluta till scannern.');
+    } finally {
+      client.disconnect();
+      setConnecting(false);
+    }
+  };
+
+  const useEmulator = () => {
+    scannerRuntime.useEmulator();
+    setRuntimeMode('emulator');
+    setGatewayStatus(null);
+    setConnectionError(null);
+  };
 
   return (
-    <Screen title="Scanner" subtitle="Rå RF-data, kalibrering och signalbehandling">
+    <Screen title="Scanner" subtitle="Rå RF-data, fysisk gateway, kalibrering och signalbehandling">
       <Card style={styles.hero}>
         <View style={styles.header}>
           <View style={styles.copy}>
             <Text style={styles.eyebrow}>PRIMÄRT POC-SPÅR</Text>
-            <Text style={styles.title}>60 GHz mekanik + UWB vävnadsrespons</Text>
+            <Text style={styles.title}>BGT60TR13C över USB och lokal Wi‑Fi</Text>
           </View>
-          <StatusPill level="observe" label="Forskningsläge" />
+          <StatusPill
+            level={runtimeMode === 'gateway' ? 'normal' : 'observe'}
+            label={runtimeMode === 'gateway' ? 'Fysisk scanner' : 'Emulator'}
+          />
         </View>
         <Text style={styles.body}>
-          Scanner-core bevarar komplex IQ-data och separerar hårdvara, transport, kalibrering och analys. Visualiseringar beskriver signalrespons – inte verifierad anatomi.
+          Bluetooth används för framtida upptäckt och styrning. Råframes skickas över WebSocket/Wi‑Fi eftersom datamängden är större än vad BLE bör bära kontinuerligt.
         </Text>
         <AppButton label="Kör scannerdiagnostik" onPress={() => setDiagnostic(runScannerCoreDiagnostic())} />
+      </Card>
+
+      <Card>
+        <Text style={styles.sectionTitle}>Fysisk gateway</Text>
+        <Text style={styles.body}>
+          Starta Python-gatewayen på datorn eller Raspberry Pi som är USB-ansluten till radarens MCU7-baseboard och ange dess lokala adress.
+        </Text>
+        <TextInput
+          accessibilityLabel="Scanner gateway URL"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          onChangeText={setGatewayUrl}
+          placeholder="ws://192.168.1.50:8765"
+          style={styles.input}
+          value={gatewayUrl}
+        />
+        <AppButton
+          label={connecting ? 'Ansluter…' : 'Testa och använd gateway'}
+          onPress={() => void connectGateway()}
+          disabled={connecting}
+        />
+        <AppButton label="Använd emulator" onPress={useEmulator} secondary disabled={runtimeMode === 'emulator'} />
+        {gatewayStatus ? (
+          <View style={styles.gatewayFacts}>
+            <Text style={styles.meta}>Källa: {gatewayStatus.source}</Text>
+            <Text style={styles.meta}>Kort: {gatewayStatus.boardUuid ?? 'okänt UUID'}</Text>
+            <Text style={styles.meta}>RDK: {gatewayStatus.sdkVersion ?? 'okänd version'}</Text>
+          </View>
+        ) : null}
+        {connectionError ? <Text style={styles.error}>{connectionError}</Text> : null}
       </Card>
 
       {diagnostic ? (
@@ -83,6 +152,18 @@ const styles = StyleSheet.create({
   body: { color: colors.inkMuted, fontSize: 13, lineHeight: 20 },
   meta: { color: colors.inkMuted, fontSize: 12 },
   limitation: { color: colors.elevated, fontSize: 12, lineHeight: 18 },
+  input: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    color: colors.ink,
+    fontSize: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  gatewayFacts: { gap: spacing.xs, backgroundColor: colors.surfaceMuted, padding: spacing.md, borderRadius: radius.md },
+  error: { color: colors.urgent, fontSize: 12, lineHeight: 18 },
   checkRow: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: spacing.sm, gap: spacing.xs },
   checkName: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   checkDetail: { color: colors.inkMuted, fontSize: 12 },

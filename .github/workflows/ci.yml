@@ -55,3 +55,41 @@ jobs:
 
       - name: Generate iOS project
         run: npx expo prebuild --platform ios --no-install --clean
+
+  ios-native:
+    runs-on: macos-15
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --loglevel=error
+
+      - name: Generate native iOS project and install pods
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Compile iOS simulator build
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace=$(find ios -maxdepth 2 -name '*.xcworkspace' -print -quit)
+          if [ -z "$workspace" ]; then
+            echo 'No Xcode workspace was generated.' >&2
+            exit 1
+          fi
+          scheme=$(basename "$workspace" .xcworkspace)
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

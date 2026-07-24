@@ -4,9 +4,14 @@ import type {
   ScannerCalibration,
   ScannerFrameAnalysis,
 } from './radio';
+import type {
+  ScannerPhysiologicalSeparation,
+  ScannerSignalQualityGate,
+} from './scannerSignal';
 import type { RfPosition } from './scanning';
 
 export type ScannerLabSource = 'emulator' | 'gateway';
+export type ScannerProcessingVersion = 'scanner-pipeline-v1' | 'scanner-pipeline-v2';
 
 export type ScannerLabCaptureOptions = {
   label?: string;
@@ -31,7 +36,7 @@ export type ScannerRecordingManifest = {
   position: RfPosition;
   hardwareProfileId: string;
   protocolVersion: 1;
-  processingVersion: 'scanner-pipeline-v1';
+  processingVersion: ScannerProcessingVersion;
   frameCount: number;
   calibrationFrameCount: number;
   dataChunkCount: number;
@@ -74,11 +79,13 @@ export type ScannerReplaySample = {
 export type ScannerReplayResult = {
   recordingId: string;
   processedAt: string;
-  processingVersion: 'scanner-pipeline-v1';
+  processingVersion: 'scanner-pipeline-v2';
   manifest: ScannerRecordingManifest;
   calibration: ScannerCalibration;
   samples: ScannerReplaySample[];
   profile: number[];
+  qualityGate: ScannerSignalQualityGate;
+  physiology: ScannerPhysiologicalSeparation;
   summary: {
     processedFrameCount: number;
     averageSignalToNoiseRatioDb: number;

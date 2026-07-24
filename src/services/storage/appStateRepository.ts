@@ -1,9 +1,9 @@
-import type { ScanSession } from '@/domain/scanning';
 import type {
   ConsentRecord,
   HealthKitImportRecord,
   UserProfile,
 } from '@/domain/onboarding';
+import type { ScanSession } from '@/domain/scanning';
 
 import { encryptedStorage } from './encryptedStorage';
 
@@ -48,10 +48,8 @@ const readPreferences = async (): Promise<PersistedPreferencesV2> => {
 };
 
 const savePreferences = async (preferences: PersistedPreferencesV2) => {
-  await encryptedStorage.set(PREFERENCESV2_KEY, preferences);
+  await encryptedStorage.set(PREFERENCES_KEY, preferences);
 };
-
-const PREFERENCESV2_KEY = PREFERENCES_KEY;
 
 export const appStateRepository = {
   descriptor: encryptedStorage.descriptor,

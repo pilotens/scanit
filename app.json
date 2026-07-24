@@ -2,7 +2,7 @@
   "expo": {
     "name": "ScanIt",
     "slug": "scanit",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "scanit",
     "userInterfaceStyle": "light",
@@ -19,7 +19,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Tillåt ScanIt att skydda lokal hälsodata med enhetens säkerhet."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -10,12 +10,14 @@
 
 ## Milestone 2 — persistent research application
 
-- encrypted local persistence
-- onboarding and informed-consent flow
-- user and device profiles
-- measurement export package
-- structured logging and crash-safe scan recovery
-- automated unit and integration tests
+- [x] encrypted local persistence with OS-protected key
+- [x] per-session encrypted records and retention ceiling
+- [x] storage health exposed in the application
+- [ ] onboarding and informed-consent flow
+- [ ] user and device profiles
+- [ ] measurement export package
+- [ ] structured logging and crash-safe scan recovery
+- [ ] automated unit and integration tests
 
 ## Milestone 3 — first real sensor
 

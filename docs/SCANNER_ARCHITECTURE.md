@@ -18,7 +18,7 @@ Bluetooth is used primarily for control and configuration. Raw high-rate scanner
 
 ### Infineon BGT60TR13C
 
-The first scanner adapter should target the BGT60TR13C. The official demo board has 1 Tx, 3 Rx, raw-data processing and USB forwarding. The connected sensor kit adds Wi-Fi and Bluetooth and can later run custom streaming firmware.
+The first scanner adapter targets the BGT60TR13C. The official demo board has 1 Tx, 3 Rx, raw-data processing and USB forwarding. The connected sensor kit adds Wi-Fi and Bluetooth and can later run custom streaming firmware.
 
 ### NOVELDA X7 Radar Direct
 
@@ -37,12 +37,36 @@ Hardware adapter
   → device/position calibration
   → DC and clutter removal
   → windowing and FFT / direct CIR profile
-  → target-bin selection
-  → phase and micro-motion extraction
-  → signal-quality scoring
+  → multi-bin phase extraction
+  → deterministic signal-quality gate
+  → respiratory and mechanical-cardiac band separation
+  → personal position-specific RF baseline
   → position-level RF observation
-  → fusion with watch reference
+  → future fusion with watch reference
 ```
+
+## Deterministic safety boundary
+
+Before a measurement can be used for baseline or longitudinal comparison, `scanner-quality-v1` evaluates packet continuity, timing, SNR, range stability, target stability, phase continuity, scanner movement, usable-frame ratio and measurement duration.
+
+A blocking condition cannot be overridden by a high aggregate score. The output is `approved`, `repeat` or `rejected`. Only `approved` recordings can update a personal baseline.
+
+## Multi-bin physiological research layer
+
+The system does not assume that the strongest range reflection is cardiac. `scanner-physiology-v1` evaluates several candidate bins and independently selects the bins with the strongest respiratory-band and mechanical-cardiac-band evidence.
+
+The current research bands are:
+
+- respiration: 0.1–0.5 Hz;
+- mechanical cardiac motion: 0.7–3.0 Hz.
+
+Outputs are periodic RF-motion estimates and must not be represented as medical heart-rate or breathing diagnoses.
+
+## Personal RF baseline
+
+Baselines are isolated by scanner position, radio modality and hardware profile. Each baseline contains up to twelve technically approved source measurements and preserves source recording identifiers, profile averages and variation in key signal features.
+
+Baseline comparisons report RF-signal change only. They do not identify anatomy, ischemia, infarction or another disease.
 
 ## SCN1 frame format
 
@@ -62,3 +86,4 @@ This is a research format, optimized for auditability and easy firmware implemen
 - RF maps are relative signal maps, not verified anatomical images.
 - Model output must include hardware, firmware, calibration and processing versions.
 - Scanner and watch timestamps must later be synchronized to a common monotonic clock.
+- A personal baseline may only contain technically approved measurements.

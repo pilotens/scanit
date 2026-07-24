@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -22,6 +22,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund --loglevel=error
+
+      - name: Scanner core tests
+        run: npm test
 
       - name: Capture type-check result
         id: typecheck

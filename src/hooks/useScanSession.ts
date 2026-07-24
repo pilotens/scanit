@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import type { ScanProgressEvent, ScanSession } from '@/domain/scanning';
 import { ScanCoordinator } from '@/services/scanning/scanCoordinator';
-import { MockRfScannerProvider } from '@/services/sensors/mockRfScanner';
+import { scannerRuntime } from '@/services/scanner/runtime/scannerRuntime';
 import { MockWearableProvider } from '@/services/sensors/mockWearable';
 import { useAppState } from '@/state/AppProvider';
 
@@ -19,21 +19,17 @@ export function useScanSession() {
   const [result, setResult] = useState<ScanSession | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const coordinator = useMemo(
-    () =>
-      new ScanCoordinator({
-        wearable: new MockWearableProvider(),
-        rfScanner: new MockRfScannerProvider(),
-        baseline,
-      }),
-    [baseline],
-  );
-
   const start = useCallback(async () => {
     if (!['idle', 'completed', 'failed'].includes(progress.phase)) return;
 
     setError(null);
     setResult(null);
+    const rfScanner = scannerRuntime.createProvider();
+    const coordinator = new ScanCoordinator({
+      wearable: new MockWearableProvider(),
+      rfScanner,
+      baseline,
+    });
 
     try {
       const session = await coordinator.run({ onProgress: setProgress });
@@ -49,8 +45,10 @@ export function useScanSession() {
         title: 'Skanningen avbröts',
         instruction: 'Kontrollera sensorerna och försök igen.',
       });
+    } finally {
+      await rfScanner.disconnect?.();
     }
-  }, [addScanSession, coordinator, progress.phase]);
+  }, [addScanSession, baseline, progress.phase]);
 
   const reset = useCallback(() => {
     setProgress(idleProgress);

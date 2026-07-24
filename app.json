@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "ScanIt",
+    "slug": "scanit",
+    "version": "0.2.0",
+    "orientation": "portrait",
+    "scheme": "scanit",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.scanit.health"
+    },
+    "android": {
+      "package": "com.scanit.health",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-splash-screen",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "Tillåt ScanIt att skydda lokal hälsodata med enhetens säkerhet."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

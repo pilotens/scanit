@@ -7,6 +7,8 @@ export type RadioModality =
   | 'bluetooth-channel-sounding';
 
 export type ScannerTransportKind = 'usb' | 'wifi' | 'bluetooth' | 'memory';
+export type RadioSampleFormat = 'complex-iq-f32' | 'real-adc-in-iq-container';
+export type RadioDataLayout = 'channel-sample' | 'rx-chirp-sample';
 
 export type Vector3 = {
   x: number;
@@ -25,20 +27,26 @@ export type RawRadioFrame = {
   bandwidthHz: number;
   sampleRateHz: number;
   channels: number;
+  /** Total complex-container points per channel. For a cube this is chirps × samples per chirp. */
   samplesPerChannel: number;
-  /** Channel-major interleaved IQ: [I0, Q0, I1, Q1, ...]. */
+  sampleFormat?: RadioSampleFormat;
+  dataLayout?: RadioDataLayout;
+  /** Channel-major interleaved container: [I0, Q0, I1, Q1, ...]. Real ADC frames use Q=0 explicitly. */
   samples: number[];
   antennaConfigurationId: string;
   calibrationId?: string;
   acquisition?: {
     source: string;
     frameRateHz?: number;
+    frameRepetitionTimeSeconds?: number;
     chirpsPerFrame?: number;
+    chirpRepetitionTimeSeconds?: number;
     samplesPerChirp?: number;
     rxMask?: number;
     txMask?: number;
     rawCubeShape?: number[];
-    chirpReduction?: string;
+    chirpReduction?: 'none' | 'mean' | string;
+    adcSignalType?: 'real' | 'complex';
   };
   deviceTemperatureCelsius?: number;
   imu?: {
@@ -74,6 +82,10 @@ export type ScannerFrameAnalysis = {
   signalToNoiseRatioDb: number;
   signalQuality: 'poor' | 'fair' | 'good' | 'excellent';
   qualityFlags: string[];
+  rxCoherence?: number;
+  chirpCoherence?: number;
+  targetConfidence?: number;
+  targetBinTracked?: boolean;
 };
 
 export type ScannerHardwareProfile = {

@@ -73,6 +73,8 @@ export function buildScannerReplay(
         referenceEvents: options.referenceEvents,
         clockModel,
         qualityGate,
+        targetBin: physiology.cardiacBin,
+        rxCalibration: calibration.rxCalibration,
       })
     : undefined;
   const interpretation = interpretScannerEvidence({

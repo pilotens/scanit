@@ -5,6 +5,7 @@ import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
 import { ScannerLabPanel } from '@/components/scanner/ScannerLabPanel';
 import { TomographyResearchPanel } from '@/components/scanner/TomographyResearchPanel';
+import { WifiSensingPanel } from '@/components/scanner/WifiSensingPanel';
 import { Screen } from '@/components/Screen';
 import { StatusPill } from '@/components/StatusPill';
 import { colors, radius, spacing } from '@/constants/theme';
@@ -122,7 +123,7 @@ export default function ScannerScreen() {
               />
             </View>
             <Text style={styles.body}>
-              BGT60TR13C mäter range, fas, koherens och periodisk mekanisk rörelse. Wi-Fi används som transport; sensorn avbildar inte anatomi eller kranskärl.
+              BGT60TR13C och Wi-Fi CSI har nu separata rådataformat och signalmodeller. Båda mäter RF-modulerad rörelse; inget av dem avbildar kranskärl.
             </Text>
             <AppButton
               label="Kör scannerdiagnostik"
@@ -130,8 +131,10 @@ export default function ScannerScreen() {
             />
           </Card>
 
+          <WifiSensingPanel />
+
           <Card>
-            <Text style={styles.sectionTitle}>Fysisk vitalgateway</Text>
+            <Text style={styles.sectionTitle}>Fysisk 60 GHz-gateway</Text>
             <Text style={styles.body}>
               Starta Python-gatewayen på datorn eller Raspberry Pi som är USB-ansluten till radarens MCU7-baseboard och ange dess lokala adress.
             </Text>

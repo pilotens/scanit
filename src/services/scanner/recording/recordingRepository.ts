@@ -13,9 +13,11 @@ import { base64ToBytes, bytesToBase64 } from './base64';
 
 const MANIFEST_PREFIX = 'scanner.recording.manifest.v1.';
 const CHUNK_PREFIX = 'scanner.recording.chunk.v1.';
-const PACKETS_PER_CHUNK = 16;
+// Raw FMCW cubes are materially larger than chirp-averaged profiles. Keep each
+// encrypted SQLite record bounded so individual reads and migrations remain manageable.
+const PACKETS_PER_CHUNK = 4;
 const MAX_RECORDINGS = 40;
-const MAX_RECORDING_BYTES = 32 * 1024 * 1024;
+const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
 
 const manifestKey = (id: string) => `${MANIFEST_PREFIX}${id}`;
 const chunkKey = (id: string, index: number) =>
@@ -101,6 +103,14 @@ export const scannerRecordingRepository = {
       });
     }
 
+    const acquisitionFlags = first.modality === 'mmwave-fmcw' && frames.some(
+      (frame) =>
+        frame.dataLayout !== 'rx-chirp-sample' ||
+        (frame.acquisition?.chirpsPerFrame ?? 0) <= 1 ||
+        frame.acquisition?.chirpReduction !== 'none',
+    )
+      ? ['raw-cube-not-preserved']
+      : [];
     const manifest: ScannerRecordingManifest = {
       schemaVersion: 1,
       id,
@@ -113,7 +123,7 @@ export const scannerRecordingRepository = {
       position: first.position,
       hardwareProfileId: input.hardwareProfileId,
       protocolVersion: 1,
-      processingVersion: 'scanner-pipeline-v1',
+      processingVersion: 'scanner-pipeline-v3',
       frameCount: frames.length,
       calibrationFrameCount: input.calibrationFrameCount,
       dataChunkCount: chunks.length,
@@ -123,7 +133,10 @@ export const scannerRecordingRepository = {
       lastTimestampNs: frames.at(-1)!.timestampNs,
       estimatedFrameRateHz: estimateFrameRate(frames),
       sequenceGaps: sequenceGaps(frames),
-      qualityFlags: unique(frames.flatMap(({ qualityFlags }) => qualityFlags)),
+      qualityFlags: unique([
+        ...frames.flatMap(({ qualityFlags }) => qualityFlags),
+        ...acquisitionFlags,
+      ]),
       tags: unique(input.tags ?? []),
       notes: input.notes ?? [],
       isSimulated: frames.every(({ isSimulated }) => isSimulated),

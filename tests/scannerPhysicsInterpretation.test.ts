@@ -1,29 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { generateSyntheticRadioFrame } from '@/services/scanner/emulator/syntheticScanner';
+import { interpretScannerEvidence } from '@/services/scanner/interpretation/evidenceEngine';
+import { separateScannerPhysiology } from '@/services/scanner/processing/physiology';
+import { ScannerSignalPipeline } from '@/services/scanner/processing/pipeline';
 import { computeBasicProfile } from '@/services/scanner/processing/profile';
 import { trackScannerTarget } from '@/services/scanner/processing/targetTracking';
-import { ScannerSignalPipeline } from '@/services/scanner/processing/pipeline';
 import { evaluateScannerSignalQuality } from '@/services/scanner/quality/signalQualityEngine';
-import { separateScannerPhysiology } from '@/services/scanner/processing/physiology';
-import { interpretScannerEvidence } from '@/services/scanner/interpretation/evidenceEngine';
 
 const buildFrames = (count = 220) => {
   const frameRateHz = 20;
   const calibrationCount = 20;
-  const start = 1_900_000_000_000_000_000n;
-  const interval = 50_000_000n;
-  const frames = Array.from({ length: count }, (_, sequence) => {
-    const frame = generateSyntheticRadioFrame({
+  const frames = Array.from({ length: count }, (_, sequence) =>
+    generateSyntheticRadioFrame({
       sessionId: 'physics-test',
       sequence,
       position: 'apex',
       elapsedSeconds: sequence / frameRateHz,
       motionScale: sequence < calibrationCount ? 0 : 1,
-    });
-    frame.timestampNs = String(start + BigInt(sequence) * interval);
-    return frame;
-  });
+    }),
+  );
   return { frames, calibrationCount };
 };
 
@@ -34,6 +30,7 @@ describe('scanner physics and interpretation boundaries', () => {
     expect(frame.sampleFormat).toBe('real-adc-in-iq-container');
     expect(frame.acquisition?.rawCubeShape).toEqual([3, 8, 64]);
     expect(frame.samplesPerChannel).toBe(8 * 64);
+    expect(frame.timing?.timestampSource).toBe('synthetic-monotonic');
 
     const profile = computeBasicProfile(frame);
     expect(profile.chirpSpectra).toHaveLength(3);
@@ -44,7 +41,7 @@ describe('scanner physics and interpretation boundaries', () => {
     expect(profile.chirpCoherence).toBeGreaterThan(0.5);
   });
 
-  it('tracks one physical range target and keeps medical interpretation disabled', () => {
+  it('tracks and calibrates one target while keeping medical interpretation disabled', () => {
     const { frames, calibrationCount } = buildFrames();
     const active = frames.slice(calibrationCount);
     const track = trackScannerTarget(active);
@@ -53,10 +50,19 @@ describe('scanner physics and interpretation boundaries', () => {
     expect(track.binStandardDeviation).toBeLessThan(2);
 
     const pipeline = new ScannerSignalPipeline();
-    pipeline.calibrate(frames.slice(0, calibrationCount), 'infineon-bgt60tr13c-emulator');
-    const analyses = active.map((frame, index) => pipeline.process(frame, track.bins[index]));
+    const calibration = pipeline.calibrate(
+      frames.slice(0, calibrationCount),
+      'infineon-bgt60tr13c-emulator',
+    );
+    const analyses = active.map((frame, index) =>
+      pipeline.process(frame, track.bins[index]),
+    );
     const qualityGate = evaluateScannerSignalQuality(active, analyses);
-    const physiology = separateScannerPhysiology(active, qualityGate);
+    const physiology = separateScannerPhysiology(
+      active,
+      qualityGate,
+      calibration.rxCalibration,
+    );
     const interpretation = interpretScannerEvidence({
       frames: active,
       analyses,
@@ -65,13 +71,23 @@ describe('scanner physics and interpretation boundaries', () => {
       targetTrack: track,
     });
 
-    expect(qualityGate.version).toBe('scanner-quality-v2');
-    expect(qualityGate.metrics.find(({ id }) => id === 'raw-cube-preservation')?.passed).toBe(true);
+    expect(calibration.rxCalibration?.version).toBe(
+      'scanner-rx-calibration-v1',
+    );
+    expect(qualityGate.version).toBe('scanner-quality-v3');
+    expect(
+      qualityGate.metrics.find(({ id }) => id === 'raw-cube-preservation')
+        ?.passed,
+    ).toBe(true);
+    expect(
+      qualityGate.metrics.find(({ id }) => id === 'rx-calibration')?.passed,
+    ).toBe(true);
     expect(interpretation.physicalTargetState).not.toBe('unsupported');
     expect(interpretation.tissueInterpretationState).toBe('not-supported');
     expect(interpretation.medicalInterpretationState).toBe('not-validated');
     expect(
-      interpretation.claims.find(({ id }) => id === 'medical-condition')?.level,
+      interpretation.claims.find(({ id }) => id === 'medical-condition')
+        ?.level,
     ).toBe('unsupported');
   });
 });

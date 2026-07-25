@@ -22,6 +22,15 @@ const seededNoise = (seed: number) => {
   return (value - Math.floor(value)) * 2 - 1;
 };
 
+const sessionHash = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
 export type SyntheticFrameOptions = {
   sessionId: string;
   sequence: number;
@@ -29,6 +38,12 @@ export type SyntheticFrameOptions = {
   elapsedSeconds: number;
   modality?: RadioModality;
   motionScale?: number;
+  rxGainScales?: number[];
+  rxPhaseOffsetsRadians?: number[];
+  clockDomain?: string;
+  monotonicTimestampNs?: string;
+  wallClockUnixNs?: string;
+  timingUncertaintyNs?: number;
 };
 
 const generateFmcwSamples = (options: SyntheticFrameOptions) => {
@@ -46,6 +61,8 @@ const generateFmcwSamples = (options: SyntheticFrameOptions) => {
   const baseRange = positionRange[options.position];
   const gain = positionGain[options.position];
   const motionScale = options.motionScale ?? 1;
+  const rxGainScales = options.rxGainScales ?? [1, 0.62, 1.42];
+  const rxPhaseOffsets = options.rxPhaseOffsetsRadians ?? [0, 0.78, -0.54];
   const samples: number[] = [];
 
   for (let channel = 0; channel < channels; channel += 1) {
@@ -69,10 +86,15 @@ const generateFmcwSamples = (options: SyntheticFrameOptions) => {
         for (const [reflectorIndex, reflector] of reflectors.entries()) {
           const beatFrequency = (2 * slope * reflector.range) / SPEED_OF_LIGHT_METERS_PER_SECOND;
           const propagationPhase = (4 * Math.PI * reflector.range) / wavelength;
-          const antennaPhase = channel * 0.17 + reflectorIndex * 0.11;
+          const antennaPhase =
+            channel * 0.17 +
+            reflectorIndex * 0.11 +
+            (rxPhaseOffsets[channel] ?? 0);
           const angle =
-            (2 * Math.PI * beatFrequency * sample) / sampleRateHz + propagationPhase + antennaPhase;
-          real += reflector.amplitude * Math.cos(angle);
+            (2 * Math.PI * beatFrequency * sample) / sampleRateHz +
+            propagationPhase +
+            antennaPhase;
+          real += reflector.amplitude * (rxGainScales[channel] ?? 1) * Math.cos(angle);
         }
         const seed = options.sequence * 1_000_000 + channel * 10_000 + chirp * 100 + sample;
         real += seededNoise(seed) * 0.025;
@@ -91,7 +113,7 @@ const generateFmcwSamples = (options: SyntheticFrameOptions) => {
     sampleFormat: 'real-adc-in-iq-container' as const,
     dataLayout: 'rx-chirp-sample' as const,
     acquisition: {
-      source: 'deterministic-body-emulator-v2',
+      source: 'deterministic-body-emulator-v3',
       frameRateHz: 20,
       frameRepetitionTimeSeconds: 0.05,
       chirpsPerFrame,
@@ -112,7 +134,10 @@ const generateDirectSamples = (options: SyntheticFrameOptions) => {
   const bandwidthHz = options.modality === 'wifi-csi' ? 40_000_000 : 1_500_000_000;
   const centerFrequencyHz = options.modality === 'wifi-csi' ? 5_500_000_000 : 7_500_000_000;
   const baseBin = options.modality === 'wifi-csi' ? 18 : 5;
-  const cardiac = 0.14 * Math.sin(2 * Math.PI * 1.18 * options.elapsedSeconds) * (options.motionScale ?? 1);
+  const cardiac =
+    0.14 *
+    Math.sin(2 * Math.PI * 1.18 * options.elapsedSeconds) *
+    (options.motionScale ?? 1);
   const samples: number[] = [];
 
   for (let channel = 0; channel < channels; channel += 1) {
@@ -142,20 +167,40 @@ const generateDirectSamples = (options: SyntheticFrameOptions) => {
 
 export function generateSyntheticRadioFrame(options: SyntheticFrameOptions): RawRadioFrame {
   const modality = options.modality ?? 'mmwave-fmcw';
-  const generated = modality === 'mmwave-fmcw'
-    ? generateFmcwSamples({ ...options, modality })
-    : generateDirectSamples({ ...options, modality });
+  const generated =
+    modality === 'mmwave-fmcw'
+      ? generateFmcwSamples({ ...options, modality })
+      : generateDirectSamples({ ...options, modality });
+  const hash = BigInt(sessionHash(options.sessionId));
+  const monotonicTimestampNs =
+    options.monotonicTimestampNs ??
+    String(1_000_000_000_000_000n + hash * 1_000_000n + BigInt(Math.round(options.elapsedSeconds * 1_000_000_000)));
+  const wallClockUnixNs =
+    options.wallClockUnixNs ??
+    String(1_900_000_000_000_000_000n + hash * 1_000_000n + BigInt(Math.round(options.elapsedSeconds * 1_000_000_000)));
+  const timingUncertaintyNs = options.timingUncertaintyNs ?? 100_000;
 
   return {
     frameId: `${options.sessionId}-${options.sequence}`,
     sessionId: options.sessionId,
     sequence: options.sequence,
-    timestampNs: String(BigInt(Date.now()) * 1_000_000n + BigInt(options.sequence)),
+    timestampNs: monotonicTimestampNs,
+    timing: {
+      clockDomain: options.clockDomain ?? `synthetic-${options.sessionId}`,
+      timestampSource: 'synthetic-monotonic',
+      monotonicTimestampNs,
+      wallClockUnixNs,
+      uncertaintyNs: timingUncertaintyNs,
+      anchorMonotonicNs: monotonicTimestampNs,
+      anchorWallClockUnixNs: wallClockUnixNs,
+    },
     modality,
     position: options.position,
     ...generated,
     antennaConfigurationId:
-      modality === 'mmwave-fmcw' ? 'bgt60tr13c-1tx-3rx-l-array' : 'synthetic-direct',
+      modality === 'mmwave-fmcw'
+        ? 'bgt60tr13c-1tx-3rx-l-array'
+        : 'synthetic-direct',
     deviceTemperatureCelsius: 31.8,
     imu: {
       acceleration: { x: 0.002, y: -0.001, z: 0.003 },

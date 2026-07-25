@@ -1,11 +1,14 @@
 import type { RfPosition } from './scanning';
-import type { ScannerFrameTiming } from './scannerTiming';
+import type { ScannerClockDescriptor } from './scannerTiming';
+
+export type ScannerTrack = 'vital-motion' | 'microwave-tomography';
 
 export type RadioModality =
   | 'mmwave-fmcw'
   | 'uwb-impulse'
   | 'wifi-csi'
-  | 'bluetooth-channel-sounding';
+  | 'bluetooth-channel-sounding'
+  | 'microwave-tomography';
 
 export type ScannerTransportKind = 'usb' | 'wifi' | 'bluetooth' | 'memory';
 export type RadioSampleFormat = 'complex-iq-f32' | 'real-adc-in-iq-container';
@@ -21,9 +24,8 @@ export type RawRadioFrame = {
   frameId: string;
   sessionId: string;
   sequence: number;
-  /** Canonical scanner-clock timestamp. Legacy recordings may still contain wall-clock nanoseconds. */
   timestampNs: string;
-  timing?: ScannerFrameTiming;
+  timing?: ScannerClockDescriptor;
   modality: RadioModality;
   position: RfPosition;
   centerFrequencyHz: number;
@@ -64,27 +66,27 @@ export type ScannerRxCalibrationChannel = {
   channel: number;
   gainCorrection: number;
   phaseCorrectionRadians: number;
-  measuredMagnitude: number;
-  measuredPhaseRadians: number;
   amplitudeCoefficientOfVariation: number;
   phaseStandardDeviationRadians: number;
-  valid: boolean;
 };
 
 export type ScannerRxCalibration = {
   version: 'scanner-rx-calibration-v1';
+  id: string;
   createdAt: string;
   hardwareProfileId: string;
   antennaConfigurationId: string;
-  frameCount: number;
-  referenceRxChannel: number;
+  position: RfPosition;
   targetBin: number;
   targetRangeMeters?: number;
+  referenceChannel: number;
   channels: ScannerRxCalibrationChannel[];
+  frameCount: number;
+  temperatureCelsius?: number;
   coherenceBefore: number;
   coherenceAfter: number;
   qualityScore: number;
-  deviceTemperatureCelsius?: number;
+  stable: boolean;
   qualityFlags: string[];
 };
 
@@ -119,20 +121,22 @@ export type ScannerFrameAnalysis = {
   chirpCoherence?: number;
   targetConfidence?: number;
   targetBinTracked?: boolean;
-  rxCalibrationApplied?: boolean;
-  rxCalibrationQualityScore?: number;
-  timingUncertaintyMilliseconds?: number;
 };
 
 export type ScannerHardwareProfile = {
   id: string;
   name: string;
+  track: ScannerTrack;
   modality: RadioModality;
   transport: ScannerTransportKind[];
   rawDataAccess: boolean;
   channels: number;
   frequencyRange: string;
-  role: 'mechanical-heart-sensing' | 'tissue-response' | 'experimental-channel-sensing';
+  role:
+    | 'mechanical-heart-sensing'
+    | 'tissue-response'
+    | 'experimental-channel-sensing'
+    | 'multistatic-tomography';
   maturity: 'selected-poc' | 'secondary-poc' | 'research-track';
   strengths: string[];
   limitations: string[];

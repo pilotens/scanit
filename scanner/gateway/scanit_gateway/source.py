@@ -73,7 +73,7 @@ class FakeRadarSource(RadarSource):
         target_bin = 9
         chirps = self._config.chirps_per_frame
         adc_samples = self._config.samples_per_chirp
-        chirp_period = self._config.chirp_repetition_time_seconds
+        chirp_period = self._config.chirp_repetition_time_s
         frame_start = sequence * frame_period
 
         for channel in range(3):
@@ -88,8 +88,6 @@ class FakeRadarSource(RadarSource):
                         range_angle + respiration_phase + cardiac_phase + channel_phase
                     )
                     value += 0.05 * math.cos(2 * math.pi * 3 * sample / adc_samples)
-                    # BGT60TR13C delivers a real ADC signal. SCN1 stores it in the
-                    # established interleaved container with an explicit zero Q value.
                     samples.extend((value, 0.0))
 
         return frame_metadata(
@@ -152,7 +150,7 @@ def frame_metadata(
             "frameRateHz": config.frame_rate_hz,
             "frameRepetitionTimeSeconds": 1 / config.frame_rate_hz,
             "chirpsPerFrame": config.chirps_per_frame,
-            "chirpRepetitionTimeSeconds": config.chirp_repetition_time_seconds,
+            "chirpRepetitionTimeSeconds": config.chirp_repetition_time_s,
             "samplesPerChirp": config.samples_per_chirp,
             "rxMask": config.rx_mask,
             "txMask": config.tx_mask,

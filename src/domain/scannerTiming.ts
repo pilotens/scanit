@@ -1,5 +1,7 @@
 export type ScannerTimestampSource =
   | 'gateway-monotonic-midpoint'
+  | 'wifi-node-monotonic'
+  | 'wifi-gateway-software-aligned'
   | 'synthetic-monotonic'
   | 'external-synchronized'
   | 'legacy-wall-clock';

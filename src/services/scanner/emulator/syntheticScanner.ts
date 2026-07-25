@@ -33,51 +33,77 @@ export type SyntheticFrameOptions = {
 
 const generateFmcwSamples = (options: SyntheticFrameOptions) => {
   const channels = 3;
-  const samplesPerChannel = 64;
+  const chirpsPerFrame = 8;
+  const samplesPerChirp = 64;
+  const samplesPerChannel = chirpsPerFrame * samplesPerChirp;
   const sampleRateHz = 2_000_000;
   const bandwidthHz = 3_000_000_000;
   const centerFrequencyHz = 60_500_000_000;
-  const chirpDuration = samplesPerChannel / sampleRateHz;
+  const chirpRepetitionTimeSeconds = 0.0005;
+  const chirpDuration = samplesPerChirp / sampleRateHz;
   const slope = bandwidthHz / chirpDuration;
   const wavelength = SPEED_OF_LIGHT_METERS_PER_SECOND / centerFrequencyHz;
   const baseRange = positionRange[options.position];
   const gain = positionGain[options.position];
   const motionScale = options.motionScale ?? 1;
-  const respirationMeters = 0.0022 * Math.sin(2 * Math.PI * 0.24 * options.elapsedSeconds);
-  const cardiacMeters =
-    0.00024 * Math.sin(2 * Math.PI * 1.18 * options.elapsedSeconds) +
-    0.00008 * Math.sin(2 * Math.PI * 2.36 * options.elapsedSeconds);
-  const reflectors = [
-    { range: baseRange + respirationMeters * motionScale, amplitude: 1 * gain },
-    { range: baseRange + 0.018 + respirationMeters * 0.65 * motionScale, amplitude: 0.42 * gain },
-    {
-      range: baseRange + 0.058 + (respirationMeters * 0.25 + cardiacMeters) * motionScale,
-      amplitude: 0.22 * gain,
-    },
-  ];
   const samples: number[] = [];
 
   for (let channel = 0; channel < channels; channel += 1) {
-    for (let sample = 0; sample < samplesPerChannel; sample += 1) {
-      let real = 0;
-      let imaginary = 0;
-      for (const [reflectorIndex, reflector] of reflectors.entries()) {
-        const beatFrequency = (2 * slope * reflector.range) / SPEED_OF_LIGHT_METERS_PER_SECOND;
-        const propagationPhase = (4 * Math.PI * reflector.range) / wavelength;
-        const antennaPhase = channel * 0.17 + reflectorIndex * 0.11;
-        const angle =
-          (2 * Math.PI * beatFrequency * sample) / sampleRateHz + propagationPhase + antennaPhase;
-        real += reflector.amplitude * Math.cos(angle);
-        imaginary += reflector.amplitude * Math.sin(angle);
+    for (let chirp = 0; chirp < chirpsPerFrame; chirp += 1) {
+      const slowTime = options.elapsedSeconds + chirp * chirpRepetitionTimeSeconds;
+      const respirationMeters = 0.0022 * Math.sin(2 * Math.PI * 0.24 * slowTime);
+      const cardiacMeters =
+        0.00024 * Math.sin(2 * Math.PI * 1.18 * slowTime) +
+        0.00008 * Math.sin(2 * Math.PI * 2.36 * slowTime);
+      const reflectors = [
+        { range: baseRange + respirationMeters * motionScale, amplitude: 1 * gain },
+        { range: baseRange + 0.018 + respirationMeters * 0.65 * motionScale, amplitude: 0.42 * gain },
+        {
+          range: baseRange + 0.058 + (respirationMeters * 0.25 + cardiacMeters) * motionScale,
+          amplitude: 0.22 * gain,
+        },
+      ];
+
+      for (let sample = 0; sample < samplesPerChirp; sample += 1) {
+        let real = 0;
+        for (const [reflectorIndex, reflector] of reflectors.entries()) {
+          const beatFrequency = (2 * slope * reflector.range) / SPEED_OF_LIGHT_METERS_PER_SECOND;
+          const propagationPhase = (4 * Math.PI * reflector.range) / wavelength;
+          const antennaPhase = channel * 0.17 + reflectorIndex * 0.11;
+          const angle =
+            (2 * Math.PI * beatFrequency * sample) / sampleRateHz + propagationPhase + antennaPhase;
+          real += reflector.amplitude * Math.cos(angle);
+        }
+        const seed = options.sequence * 1_000_000 + channel * 10_000 + chirp * 100 + sample;
+        real += seededNoise(seed) * 0.025;
+        samples.push(real, 0);
       }
-      const seed = options.sequence * 100_000 + channel * 1_000 + sample;
-      real += seededNoise(seed) * 0.025;
-      imaginary += seededNoise(seed + 17) * 0.025;
-      samples.push(real, imaginary);
     }
   }
 
-  return { samples, channels, samplesPerChannel, sampleRateHz, bandwidthHz, centerFrequencyHz };
+  return {
+    samples,
+    channels,
+    samplesPerChannel,
+    sampleRateHz,
+    bandwidthHz,
+    centerFrequencyHz,
+    sampleFormat: 'real-adc-in-iq-container' as const,
+    dataLayout: 'rx-chirp-sample' as const,
+    acquisition: {
+      source: 'deterministic-body-emulator-v2',
+      frameRateHz: 20,
+      frameRepetitionTimeSeconds: 0.05,
+      chirpsPerFrame,
+      chirpRepetitionTimeSeconds,
+      samplesPerChirp,
+      rxMask: 0b111,
+      txMask: 0b001,
+      rawCubeShape: [channels, chirpsPerFrame, samplesPerChirp],
+      chirpReduction: 'none' as const,
+      adcSignalType: 'real' as const,
+    },
+  };
 };
 
 const generateDirectSamples = (options: SyntheticFrameOptions) => {
@@ -108,6 +134,9 @@ const generateDirectSamples = (options: SyntheticFrameOptions) => {
     sampleRateHz: 1_000,
     bandwidthHz,
     centerFrequencyHz,
+    sampleFormat: 'complex-iq-f32' as const,
+    dataLayout: 'channel-sample' as const,
+    acquisition: { source: 'synthetic-direct-v1' },
   };
 };
 
@@ -125,7 +154,8 @@ export function generateSyntheticRadioFrame(options: SyntheticFrameOptions): Raw
     modality,
     position: options.position,
     ...generated,
-    antennaConfigurationId: modality === 'mmwave-fmcw' ? '1tx-3rx-l-array' : 'synthetic-direct',
+    antennaConfigurationId:
+      modality === 'mmwave-fmcw' ? 'bgt60tr13c-1tx-3rx-l-array' : 'synthetic-direct',
     deviceTemperatureCelsius: 31.8,
     imu: {
       acceleration: { x: 0.002, y: -0.001, z: 0.003 },

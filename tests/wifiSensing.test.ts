@@ -17,7 +17,7 @@ describe('Wi-Fi CSI vital sensing track', () => {
     const packet = encodeWifiCsiFrame(frame);
     const decoded = decodeWifiCsiFrame(packet);
     expect(decoded.subcarrierIndices).toEqual(frame.subcarrierIndices);
-    expect(decoded.csi.length).toBe(frame.csi.length);
+    expect(decoded.csi).toEqual(Array.from(new Float32Array(frame.csi)));
     expect(decoded.soundingSequence).toBe(0);
 
     packet[Math.floor(packet.length / 2)]! ^= 0xff;
@@ -58,11 +58,12 @@ describe('Wi-Fi CSI vital sensing track', () => {
     const capture = simulateWifiCsiCapture({ id: 'wifi-recording-test', soundingCount: 80 });
     const manifest = await wifiSensingRecordingRepository.save(capture);
     const loaded = await wifiSensingRecordingRepository.load(manifest.id);
+    const expectedCsi = Array.from(new Float32Array(capture.frames[12]!.csi));
 
     expect(manifest.aggregateCrc32).toMatch(/^[0-9a-f]{8}$/);
     expect(manifest.chunkCount).toBeGreaterThan(1);
     expect(loaded.frames).toHaveLength(capture.frames.length);
-    expect(loaded.frames[12]?.csi).toEqual(capture.frames[12]?.csi);
+    expect(loaded.frames[12]?.csi).toEqual(expectedCsi);
     expect(loaded.frames[12]?.timing).toEqual(capture.frames[12]?.timing);
   });
 

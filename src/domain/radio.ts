@@ -1,5 +1,5 @@
 import type { RfPosition } from './scanning';
-import type { ScannerClockDescriptor } from './scannerTiming';
+import type { ScannerFrameTiming } from './scannerTiming';
 
 export type ScannerTrack = 'vital-motion' | 'microwave-tomography';
 
@@ -25,7 +25,7 @@ export type RawRadioFrame = {
   sessionId: string;
   sequence: number;
   timestampNs: string;
-  timing?: ScannerClockDescriptor;
+  timing?: ScannerFrameTiming;
   modality: RadioModality;
   position: RfPosition;
   centerFrequencyHz: number;
@@ -66,27 +66,27 @@ export type ScannerRxCalibrationChannel = {
   channel: number;
   gainCorrection: number;
   phaseCorrectionRadians: number;
+  measuredMagnitude: number;
+  measuredPhaseRadians: number;
   amplitudeCoefficientOfVariation: number;
   phaseStandardDeviationRadians: number;
+  valid: boolean;
 };
 
 export type ScannerRxCalibration = {
   version: 'scanner-rx-calibration-v1';
-  id: string;
   createdAt: string;
   hardwareProfileId: string;
   antennaConfigurationId: string;
-  position: RfPosition;
+  frameCount: number;
+  referenceRxChannel: number;
   targetBin: number;
   targetRangeMeters?: number;
-  referenceChannel: number;
   channels: ScannerRxCalibrationChannel[];
-  frameCount: number;
-  temperatureCelsius?: number;
   coherenceBefore: number;
   coherenceAfter: number;
   qualityScore: number;
-  stable: boolean;
+  deviceTemperatureCelsius?: number;
   qualityFlags: string[];
 };
 
@@ -121,6 +121,9 @@ export type ScannerFrameAnalysis = {
   chirpCoherence?: number;
   targetConfidence?: number;
   targetBinTracked?: boolean;
+  rxCalibrationApplied?: boolean;
+  rxCalibrationQualityScore?: number;
+  timingUncertaintyMilliseconds?: number;
 };
 
 export type ScannerHardwareProfile = {

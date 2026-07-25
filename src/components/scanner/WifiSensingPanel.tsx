@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
 import { StatusPill } from '@/components/StatusPill';
 import { colors, radius, spacing } from '@/constants/theme';
 import type { WifiSensingAnalysis } from '@/domain/wifiSensing';
+import { GatewayWifiSensingProvider } from '@/services/scanner/wifi/gatewayProvider';
 import { runWifiSensingLab } from '@/services/scanner/wifi/labRunner';
 
 const rate = (value: number | undefined) =>
@@ -31,18 +32,35 @@ const Trace = ({ values }: { values: number[] }) => (
 export function WifiSensingPanel() {
   const [analysis, setAnalysis] = useState<WifiSensingAnalysis | null>(null);
   const [calibrationScore, setCalibrationScore] = useState<number | null>(null);
+  const [gatewayUrl, setGatewayUrl] = useState('ws://192.168.1.50:8770');
+  const [lastSource, setLastSource] = useState<'simulator' | 'gateway' | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = async () => {
+  const run = async (source: 'simulator' | 'gateway') => {
     setRunning(true);
     setError(null);
     try {
-      const result = await runWifiSensingLab({ label: 'Scanner Wi-Fi CSI diagnostic' });
+      const provider =
+        source === 'gateway'
+          ? new GatewayWifiSensingProvider(gatewayUrl.trim())
+          : undefined;
+      const result = await runWifiSensingLab({
+        provider,
+        label:
+          source === 'gateway'
+            ? 'Physical multi-link Wi-Fi CSI capture'
+            : 'Scanner Wi-Fi CSI diagnostic',
+      });
       setAnalysis(result.analysis);
       setCalibrationScore(result.calibrationQualityScore);
+      setLastSource(source);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Wi-Fi CSI-diagnostiken misslyckades.');
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Wi-Fi CSI-diagnostiken misslyckades.',
+      );
     } finally {
       setRunning(false);
     }
@@ -57,16 +75,43 @@ export function WifiSensingPanel() {
         </View>
         <StatusPill
           level={analysis?.qualityGate.verdict === 'approved' ? 'normal' : 'observe'}
-          label={analysis ? analysis.qualityGate.verdict : 'Ej körd'}
+          label={
+            analysis
+              ? `${lastSource === 'gateway' ? 'Fysisk' : 'Sim'} · ${analysis.qualityGate.verdict}`
+              : 'Ej körd'
+          }
         />
       </View>
       <Text style={styles.body}>
-        Diagnostiken använder tre synkroniserade mottagarlänkar, 56 OFDM-subbärare, stilla kalibrering och WCS1 record/replay. Resultatet är kanalrörelse – inte en anatomibild.
+        Gatewayen samlar minst två CSI-mottagarlänkar, mappar dem till WCS1 och
+        bevarar klockosäkerhet, subbärare och paketmetadata. Resultatet är
+        kanalrörelse – inte en anatomibild.
       </Text>
+
+      <View style={styles.gatewayBox}>
+        <Text style={styles.traceLabel}>FYSISK WCS1-GATEWAY</Text>
+        <TextInput
+          accessibilityLabel="Wi-Fi CSI gateway URL"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          onChangeText={setGatewayUrl}
+          placeholder="ws://192.168.1.50:8770"
+          style={styles.input}
+          value={gatewayUrl}
+        />
+        <AppButton
+          label={running ? 'Samlar fysisk CSI…' : 'Kör fysisk Wi-Fi CSI-capture'}
+          disabled={running || !gatewayUrl.trim()}
+          onPress={() => void run('gateway')}
+        />
+      </View>
+
       <AppButton
-        label={running ? 'Kör Wi-Fi CSI-diagnostik…' : 'Kör Wi-Fi CSI-diagnostik'}
+        label={running ? 'Kör Wi-Fi CSI-diagnostik…' : 'Kör CSI-simulator'}
         disabled={running}
-        onPress={() => void run()}
+        onPress={() => void run('simulator')}
+        secondary
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -95,13 +140,19 @@ export function WifiSensingPanel() {
           <Text style={styles.traceLabel}>SEPARERAT MEKANISKT FREKVENSBAND</Text>
           <Trace values={analysis.mechanicalTrace} />
           <Text style={styles.meta}>
-            {analysis.soundingCount} parade soundings · {analysis.receiverLinkCount} länkar · {analysis.selectedSubcarrierCount} subbärare · multipathstabilitet {(analysis.multipathStability * 100).toFixed(0)}%
+            {analysis.soundingCount} parade soundings · {analysis.receiverLinkCount}{' '}
+            länkar · {analysis.selectedSubcarrierCount} subbärare ·
+            multipathstabilitet {(analysis.multipathStability * 100).toFixed(0)}%
           </Text>
           {analysis.qualityGate.reasons.map((reason) => (
-            <Text key={reason} style={styles.warning}>• {reason}</Text>
+            <Text key={reason} style={styles.warning}>
+              • {reason}
+            </Text>
           ))}
           <Text style={styles.boundary}>
-            Wi-Fi CSI kan i detta spår endast stödja RF-periodicitet. Anatomi, blodflöde, kranskärl, förträngning, ischemi och infarkt är fortsatt blockerade slutsatser.
+            Wi-Fi CSI kan i detta spår endast stödja RF-periodicitet. Anatomi,
+            blodflöde, kranskärl, förträngning, ischemi och infarkt är fortsatt
+            blockerade slutsatser.
           </Text>
         </View>
       ) : null}
@@ -116,6 +167,22 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 1.1 },
   title: { color: colors.ink, fontSize: 18, fontWeight: '700' },
   body: { color: colors.inkMuted, fontSize: 13, lineHeight: 20 },
+  gatewayBox: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  input: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+    color: colors.ink,
+    fontSize: 13,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   error: { color: colors.urgent, fontSize: 12 },
   results: { gap: spacing.sm },
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },

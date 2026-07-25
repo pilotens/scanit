@@ -56,9 +56,18 @@ class WifiGatewayConfig:
             raise ValueError("Session, TX node and RX node identifiers are required.")
         if self.frame_rate_hz <= 0 or self.frame_rate_hz > 100:
             raise ValueError("frame_rate_hz must be between 1 and 100.")
-        if self.bandwidth_hz not in {20_000_000, 40_000_000, 80_000_000, 160_000_000, 320_000_000}:
+        if self.bandwidth_hz not in {
+            20_000_000,
+            40_000_000,
+            80_000_000,
+            160_000_000,
+            320_000_000,
+        }:
             raise ValueError("Unsupported Wi-Fi channel bandwidth.")
-        if not self.subcarrier_indices or len(set(self.subcarrier_indices)) != len(self.subcarrier_indices):
+        if (
+            not self.subcarrier_indices
+            or len(set(self.subcarrier_indices)) != len(self.subcarrier_indices)
+        ):
             raise ValueError("An explicit unique subcarrier map is required.")
 
     def mapping(self) -> WifiFrameMapping:
@@ -133,8 +142,20 @@ class FakeWifiCsiSource(WifiCsiSource):
 
     def configure(self, config: WifiGatewayConfig) -> dict[str, Any]:
         config.validate()
+        if config.session_id != self._config.session_id:
+            self._sequence = 0
         self._config = config
         return self.status()
+
+    @staticmethod
+    def _receiver_parameters(receiver_id: str) -> tuple[float, float, float, float]:
+        signature = sum((index + 1) * ord(value) for index, value in enumerate(receiver_id))
+        normalized = (signature % 997) / 997
+        phase_offset = -0.55 + normalized * 1.1
+        magnitude_scale = 0.82 + ((signature // 7) % 13) * 0.025
+        respiration_gain = 0.72 + ((signature // 11) % 9) * 0.055
+        mechanical_gain = 0.55 + ((signature // 17) % 11) * 0.045
+        return phase_offset, magnitude_scale, respiration_gain, mechanical_gain
 
     def read_frame(self) -> dict[str, Any]:
         if not self._connected:
@@ -143,17 +164,46 @@ class FakeWifiCsiSource(WifiCsiSource):
         self._sequence += 1
         time.sleep(min(1 / self._config.frame_rate_hz, 0.01))
         elapsed = sequence / self._config.frame_rate_hz
-        respiration = 0.3 * math.sin(2 * math.pi * 0.24 * elapsed)
-        mechanical = 0.06 * math.sin(2 * math.pi * 1.18 * elapsed)
+        respiration = math.sin(2 * math.pi * 0.24 * elapsed)
+        mechanical = math.sin(2 * math.pi * 1.18 * elapsed)
+        (
+            receiver_phase,
+            receiver_magnitude,
+            respiration_gain,
+            mechanical_gain,
+        ) = self._receiver_parameters(self._config.rx_node_id)
         csi: list[float] = []
         for subcarrier in self._config.subcarrier_indices:
-            phase = 0.6 + subcarrier * 0.022 + respiration + mechanical
-            magnitude = 0.9 + 0.03 * math.sin(subcarrier * 0.17)
-            csi.extend((magnitude * math.cos(phase), magnitude * math.sin(phase)))
-        timestamp_ns = self._started_ns + int(sequence * 1_000_000_000 / self._config.frame_rate_hz)
+            subcarrier_multipath = 0.025 * math.sin(
+                2 * math.pi * 0.035 * elapsed + subcarrier * 0.13 + receiver_phase
+            )
+            phase_value = (
+                0.6
+                + receiver_phase
+                + subcarrier * 0.022
+                + 0.3 * respiration_gain * respiration
+                + 0.06 * mechanical_gain * mechanical
+                + subcarrier_multipath
+            )
+            magnitude = receiver_magnitude * (
+                0.9
+                + 0.03 * math.sin(subcarrier * 0.17 + receiver_phase)
+                + 0.008 * respiration
+            )
+            csi.extend(
+                (
+                    magnitude * math.cos(phase_value),
+                    magnitude * math.sin(phase_value),
+                )
+            )
+        timestamp_ns = self._started_ns + int(
+            sequence * 1_000_000_000 / self._config.frame_rate_hz
+        )
         return {
             "schemaVersion": 1,
-            "frameId": f"{self._config.session_id}-{self._config.rx_node_id}-{sequence}",
+            "frameId": (
+                f"{self._config.session_id}-{self._config.rx_node_id}-{sequence}"
+            ),
             "sessionId": self._config.session_id,
             "sequence": sequence,
             "soundingSequence": sequence,
@@ -176,10 +226,10 @@ class FakeWifiCsiSource(WifiCsiSource):
             "spatialStream": self._config.spatial_stream,
             "subcarrierIndices": list(self._config.subcarrier_indices),
             "csi": csi,
-            "rssiDbm": -43,
+            "rssiDbm": -43 + int((receiver_magnitude - 0.9) * 8),
             "noiseFloorDbm": -94,
             "packetSequence": sequence,
-            "firmwareVersion": "fake-wifi-csi-v1",
+            "firmwareVersion": "fake-wifi-csi-v2",
             "source": self.source_name,
             "qualityFlags": [],
             "isSimulated": True,
@@ -188,6 +238,7 @@ class FakeWifiCsiSource(WifiCsiSource):
     def status(self) -> dict[str, Any]:
         return {
             "source": self.source_name,
+            "firmwareVersion": "fake-wifi-csi-v2",
             "deviceConnected": self._connected,
             "supportsRawCsi": True,
             "explicitSubcarrierMap": True,
@@ -227,17 +278,22 @@ class SerialWifiCsiSource(WifiCsiSource):
         while not self._pending:
             chunk = self._serial.read(4096)
             if not chunk:
-                raise TimeoutError("Timed out waiting for CSI0 data from the ESP32 node.")
+                raise TimeoutError(
+                    "Timed out waiting for CSI0 data from the ESP32 node."
+                )
             records = self._parser.feed(chunk)
             self._pending.extend(
-                record_to_wcs1_frame(record, self._config.mapping()) for record in records
+                record_to_wcs1_frame(record, self._config.mapping())
+                for record in records
             )
         return self._pending.pop(0)
 
     def status(self) -> dict[str, Any]:
         return {
             "source": self.source_name,
-            "deviceConnected": self._serial is not None and bool(self._serial.is_open),
+            "firmwareVersion": "scanit-esp32-wifi-csi-v1",
+            "deviceConnected": self._serial is not None
+            and bool(self._serial.is_open),
             "serialPort": self._port,
             "baudrate": self._baudrate,
             "supportsRawCsi": True,

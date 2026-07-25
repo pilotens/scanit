@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .clock import build_frame_timing, clock_status, monotonic_now_ns
 from .config import FmcwConfig
 from .source import RadarSource, frame_metadata
 
@@ -25,19 +26,31 @@ class InfineonRdkSource(RadarSource):
         try:
             from ifxradarsdk import get_version_full
             from ifxradarsdk.fmcw import DeviceFmcw
-            from ifxradarsdk.fmcw.types import FmcwSequenceChirp, FmcwSimpleSequenceConfig
+            from ifxradarsdk.fmcw.types import (
+                FmcwSequenceChirp,
+                FmcwSimpleSequenceConfig,
+            )
         except ImportError as error:
             raise InfineonRdkUnavailable(
-                "Infineon ifxradarsdk is not installed. Install the Python wheel included "
-                "with the Radar Development Kit on the gateway machine."
+                "Infineon ifxradarsdk is not installed. Install the Python wheel "
+                "included with the Radar Development Kit on the gateway machine."
             ) from error
-        return get_version_full, DeviceFmcw, FmcwSimpleSequenceConfig, FmcwSequenceChirp
+        return (
+            get_version_full,
+            DeviceFmcw,
+            FmcwSimpleSequenceConfig,
+            FmcwSequenceChirp,
+        )
 
     def connect(self) -> dict[str, Any]:
         if self._device is not None:
             return self.status()
         get_version_full, DeviceFmcw, _, _ = self._load_sdk()
-        self._device = DeviceFmcw(uuid=self._board_uuid) if self._board_uuid else DeviceFmcw()
+        self._device = (
+            DeviceFmcw(uuid=self._board_uuid)
+            if self._board_uuid
+            else DeviceFmcw()
+        )
         self._sdk_version = str(get_version_full())
         self._board_uuid = str(self._device.get_board_uuid())
         self.configure(self._config)
@@ -62,7 +75,7 @@ class InfineonRdkSource(RadarSource):
         )
         simple = FmcwSimpleSequenceConfig(
             frame_repetition_time_s=1 / config.frame_rate_hz,
-            chirp_repetition_time_s=config.chirp_repetition_time_seconds,
+            chirp_repetition_time_s=config.chirp_repetition_time_s,
             num_chirps=config.chirps_per_frame,
             tdm_mimo=False,
             chirp=chirp,
@@ -81,35 +94,40 @@ class InfineonRdkSource(RadarSource):
     ) -> dict[str, Any]:
         if self._device is None:
             self.connect()
+        acquisition_started = monotonic_now_ns()
         frame_contents = self._device.get_next_frame()
+        acquisition_ended = monotonic_now_ns()
         if not frame_contents:
             raise RuntimeError("Infineon RDK returned an empty frame.")
         cube = frame_contents[0]
         if len(cube.shape) != 3:
             raise RuntimeError(f"Unexpected radar cube dimensions: {cube.shape!r}")
 
-        # The RDK returns [Rx antenna, chirp, ADC sample]. Preserve the complete
-        # cube. Chirp averaging would destroy Doppler, within-frame coherence and
-        # information required for reliable phase tracking.
         channels, chirps, adc_samples = (int(value) for value in cube.shape)
         if adc_samples != self._config.samples_per_chirp:
             raise RuntimeError(
-                f"Configured {self._config.samples_per_chirp} ADC samples but received {adc_samples}."
+                f"Configured {self._config.samples_per_chirp} ADC samples but "
+                f"received {adc_samples}."
             )
         if chirps != self._config.chirps_per_frame:
             raise RuntimeError(
-                f"Configured {self._config.chirps_per_frame} chirps but received {chirps}."
+                f"Configured {self._config.chirps_per_frame} chirps but "
+                f"received {chirps}."
             )
 
         samples: list[float] = []
         for channel in range(channels):
             for chirp_index in range(chirps):
                 for sample in range(adc_samples):
-                    # BGT60TR13C exposes a real ADC signal. The transport keeps
-                    # backwards-compatible interleaved storage and explicitly
-                    # marks Q as synthetic zero in the metadata.
-                    samples.extend((float(cube[channel, chirp_index, sample]), 0.0))
+                    samples.extend(
+                        (float(cube[channel, chirp_index, sample]), 0.0)
+                    )
 
+        timing = build_frame_timing(
+            acquisition_started,
+            acquisition_ended,
+            source="gateway-monotonic-midpoint",
+        )
         return frame_metadata(
             config=self._config,
             session_id=session_id,
@@ -121,6 +139,7 @@ class InfineonRdkSource(RadarSource):
             source=self.source_name,
             simulated=False,
             raw_cube_shape=[channels, chirps, adc_samples],
+            timing=timing,
         )
 
     def status(self) -> dict[str, Any]:
@@ -131,6 +150,7 @@ class InfineonRdkSource(RadarSource):
             "sdkVersion": self._sdk_version,
             "config": self._config.public_dict(),
             "rawCubePreserved": True,
+            "clock": clock_status(),
         }
 
     def close(self) -> None:

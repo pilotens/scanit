@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { scannerHardwareProfiles } from '@/services/scanner/hardwareProfiles';
 import { createCircularTomographyGeometry } from '@/services/scanner/tomography/geometry';
@@ -8,6 +8,7 @@ import {
   createTomographyFrequencySweep,
   simulateTomographyCapture,
 } from '@/services/scanner/tomography/simulator';
+import { tomographyCaptureRepository } from '@/services/scanner/tomography/tomographyRepository';
 import { validateTomographyCapture } from '@/services/scanner/tomography/validation';
 
 const grid = {
@@ -20,6 +21,10 @@ const grid = {
 };
 
 describe('multistatic microwave tomography research track', () => {
+  beforeEach(async () => {
+    await tomographyCaptureRepository.clear();
+  });
+
   it('keeps vital sensing and tomography as separate hardware tracks', () => {
     const vitalProfiles = scannerHardwareProfiles.filter(
       ({ track }) => track === 'vital-motion',
@@ -104,6 +109,29 @@ describe('multistatic microwave tomography research track', () => {
     expect(validateTomographyCapture(subject).valid).toBe(true);
     expect(subject.referenceCaptureId).toBe(background.id);
     expect(subject.measurements).toHaveLength(background.measurements.length);
+  });
+
+  it('stores immutable tomography captures in encrypted chunks', async () => {
+    const geometry = createCircularTomographyGeometry({ antennaCount: 8 });
+    const frequenciesHz = createTomographyFrequencySweep({ frequencyCount: 8 })
+      .frequenciesHz;
+    const capture = simulateTomographyCapture({
+      id: 'stored-background',
+      geometry,
+      calibrationRole: 'background',
+      frequenciesHz,
+      noiseAmplitude: 0,
+    });
+
+    const manifest = await tomographyCaptureRepository.save(capture);
+    const loaded = await tomographyCaptureRepository.load(capture.id);
+
+    expect(manifest.measurementCount).toBe(capture.measurements.length);
+    expect(manifest.chunkCount).toBeGreaterThan(1);
+    expect(manifest.aggregateCrc32).toMatch(/^[0-9a-f]{8}$/);
+    expect(loaded.measurements).toEqual(capture.measurements);
+    expect(loaded.geometry).toEqual(capture.geometry);
+    expect(loaded.sweep).toEqual(capture.sweep);
   });
 
   it('rejects malformed measurement sets before inverse reconstruction', () => {

@@ -15,7 +15,7 @@ export type ScannerQualityMetric = {
 };
 
 export type ScannerSignalQualityGate = {
-  version: 'scanner-quality-v1' | 'scanner-quality-v2';
+  version: 'scanner-quality-v1' | 'scanner-quality-v2' | 'scanner-quality-v3';
   evaluatedAt: string;
   verdict: ScannerQualityVerdict;
   score: number;
@@ -28,7 +28,7 @@ export type ScannerSignalQualityGate = {
 };
 
 export type ScannerPhysiologicalSeparation = {
-  version: 'scanner-physiology-v1' | 'scanner-physiology-v2';
+  version: 'scanner-physiology-v1' | 'scanner-physiology-v2' | 'scanner-physiology-v3';
   reliable: boolean;
   frameRateHz: number;
   durationSeconds: number;

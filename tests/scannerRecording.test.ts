@@ -26,7 +26,7 @@ describe('scanner record and replay', () => {
     expect([...base64ToBytes(bytesToBase64(source))]).toEqual([...source]);
   });
 
-  it('stores chunked SCN1 frames and replays them through the signal pipeline', async () => {
+  it('stores chunked SCN1 raw cubes and replays them through the signal pipeline', async () => {
     const manifest = await scannerRecordingRepository.save({
       frames: frames('apex', 1),
       source: 'emulator',
@@ -35,16 +35,19 @@ describe('scanner record and replay', () => {
       calibrationFrameCount: 8,
       label: 'Apex test',
     });
-    expect(manifest.dataChunkCount).toBe(2);
+    expect(manifest.dataChunkCount).toBe(8);
     expect(manifest.frameCount).toBe(32);
     expect(manifest.aggregateCrc32).toMatch(/^[0-9a-f]{8}$/);
+    expect(manifest.qualityFlags).not.toContain('raw-cube-not-preserved');
 
     const recording = await scannerRecordingRepository.load(manifest.id);
     expect(recording.frames).toHaveLength(32);
+    expect(recording.frames[0]?.acquisition?.rawCubeShape).toEqual([3, 8, 64]);
     const replay = replayScannerRecording(recording);
     expect(replay.summary.processedFrameCount).toBe(24);
     expect(replay.summary.averageSignalToNoiseRatioDb).toBeGreaterThan(6);
     expect(replay.profile.length).toBeGreaterThan(8);
+    expect(replay.targetTracking.confidence).toBeGreaterThan(0);
   });
 
   it('compares two immutable recordings without needing scanner hardware', async () => {

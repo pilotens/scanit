@@ -23,8 +23,29 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund --loglevel=error
 
-      - name: Scanner core tests
-        run: npm test
+      - name: Capture scanner core tests
+        id: scanner_tests
+        shell: bash
+        run: |
+          set +e
+          npm test > scanner-tests.log 2>&1
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cat scanner-tests.log
+          exit 0
+
+      - name: Upload scanner test diagnostics
+        if: steps.scanner_tests.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-test-diagnostics
+          path: scanner-tests.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail on scanner test errors
+        if: steps.scanner_tests.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Capture type-check result
         id: typecheck

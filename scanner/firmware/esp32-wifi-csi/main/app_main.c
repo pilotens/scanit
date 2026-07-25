@@ -1,6 +1,8 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_check.h"
@@ -16,7 +18,7 @@
 
 #define CSI_QUEUE_DEPTH 24
 #define CSI_MAX_BYTES 512
-#define CSI_RECORD_MAGIC 0x30534943u /* CSI0, little-endian on wire */
+#define CSI_RECORD_MAGIC 0x30495343u /* CSI0, little-endian on wire */
 #define CSI_RECORD_VERSION 1u
 
 static const char *TAG = "scanit-wifi-csi";

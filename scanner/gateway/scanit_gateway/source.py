@@ -6,6 +6,7 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .clock import build_frame_timing, clock_status, monotonic_now_ns
 from .config import FmcwConfig
 
 
@@ -66,6 +67,7 @@ class FakeRadarSource(RadarSource):
     ) -> dict[str, Any]:
         if not self._connected:
             self.connect()
+        acquisition_started = monotonic_now_ns()
         frame_period = 1 / self._config.frame_rate_hz
         time.sleep(min(frame_period, 0.01))
 
@@ -82,14 +84,28 @@ class FakeRadarSource(RadarSource):
                 respiration_phase = 0.42 * math.sin(2 * math.pi * 0.24 * slow_time)
                 cardiac_phase = 0.055 * math.sin(2 * math.pi * 1.15 * slow_time)
                 channel_phase = channel * 0.17
+                gain = (1.0, 0.62, 1.42)[channel]
+                phase_bias = (0.0, 0.78, -0.54)[channel]
                 for sample in range(adc_samples):
                     range_angle = 2 * math.pi * target_bin * sample / adc_samples
-                    value = 0.65 * math.cos(
-                        range_angle + respiration_phase + cardiac_phase + channel_phase
+                    value = gain * 0.65 * math.cos(
+                        range_angle
+                        + respiration_phase
+                        + cardiac_phase
+                        + channel_phase
+                        + phase_bias
                     )
-                    value += 0.05 * math.cos(2 * math.pi * 3 * sample / adc_samples)
+                    value += 0.05 * math.cos(
+                        2 * math.pi * 3 * sample / adc_samples
+                    )
                     samples.extend((value, 0.0))
 
+        acquisition_ended = monotonic_now_ns()
+        timing = build_frame_timing(
+            acquisition_started,
+            acquisition_ended,
+            source="gateway-monotonic-midpoint",
+        )
         return frame_metadata(
             config=self._config,
             session_id=session_id,
@@ -101,6 +117,7 @@ class FakeRadarSource(RadarSource):
             source=self.source_name,
             simulated=True,
             raw_cube_shape=[3, chirps, adc_samples],
+            timing=timing,
         )
 
     def status(self) -> dict[str, Any]:
@@ -110,6 +127,7 @@ class FakeRadarSource(RadarSource):
             "boardUuid": "fake-bgt60tr13c",
             "sdkVersion": "fake",
             "config": self._config.public_dict(),
+            "clock": clock_status(),
         }
 
     def close(self) -> None:
@@ -128,12 +146,14 @@ def frame_metadata(
     source: str,
     simulated: bool,
     raw_cube_shape: list[int],
+    timing: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "frameId": str(uuid.uuid4()),
         "sessionId": session_id,
         "sequence": sequence,
-        "timestampNs": str(time.time_ns()),
+        "timestampNs": timing["monotonicTimestampNs"],
+        "timing": timing,
         "modality": "mmwave-fmcw",
         "position": position,
         "centerFrequencyHz": config.center_frequency_hz,
@@ -144,7 +164,9 @@ def frame_metadata(
         "sampleFormat": "real-adc-in-iq-container",
         "dataLayout": "rx-chirp-sample",
         "samples": samples,
-        "antennaConfigurationId": f"bgt60tr13c-rx{config.rx_mask:02x}-tx{config.tx_mask:02x}",
+        "antennaConfigurationId": (
+            f"bgt60tr13c-rx{config.rx_mask:02x}-tx{config.tx_mask:02x}"
+        ),
         "acquisition": {
             "source": source,
             "frameRateHz": config.frame_rate_hz,

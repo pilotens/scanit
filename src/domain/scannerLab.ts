@@ -10,13 +10,19 @@ import type {
   ScannerSignalQualityGate,
   ScannerTargetTrackingSummary,
 } from './scannerSignal';
+import type {
+  ScannerClockModel,
+  ScannerCoherentAverage,
+  ScannerReferenceEvent,
+} from './scannerTiming';
 import type { RfPosition } from './scanning';
 
 export type ScannerLabSource = 'emulator' | 'gateway';
 export type ScannerProcessingVersion =
   | 'scanner-pipeline-v1'
   | 'scanner-pipeline-v2'
-  | 'scanner-pipeline-v3';
+  | 'scanner-pipeline-v3'
+  | 'scanner-pipeline-v4';
 
 export type ScannerLabCaptureOptions = {
   label?: string;
@@ -70,9 +76,14 @@ export type ScannerRecording = {
   frames: RawRadioFrame[];
 };
 
+export type ScannerReplayOptions = {
+  referenceEvents?: ScannerReferenceEvent[];
+};
+
 export type ScannerReplaySample = {
   sequence: number;
   timestampNs: string;
+  phaseRadians?: number;
   targetRangeMeters?: number;
   displacementMillimeters?: number;
   signalToNoiseRatioDb: number;
@@ -81,13 +92,16 @@ export type ScannerReplaySample = {
   qualityFlags: string[];
   chirpCoherence?: number;
   rxCoherence?: number;
+  rxCoherenceBeforeCalibration?: number;
   targetConfidence?: number;
+  rxCalibrationApplied?: boolean;
+  timingUncertaintyMilliseconds?: number;
 };
 
 export type ScannerReplayResult = {
   recordingId: string;
   processedAt: string;
-  processingVersion: 'scanner-pipeline-v3';
+  processingVersion: 'scanner-pipeline-v4';
   manifest: ScannerRecordingManifest;
   calibration: ScannerCalibration;
   samples: ScannerReplaySample[];
@@ -96,6 +110,8 @@ export type ScannerReplayResult = {
   physiology: ScannerPhysiologicalSeparation;
   targetTracking: ScannerTargetTrackingSummary;
   interpretation: ScannerInterpretation;
+  clockModel: ScannerClockModel;
+  coherentAverage?: ScannerCoherentAverage;
   summary: {
     processedFrameCount: number;
     averageSignalToNoiseRatioDb: number;
@@ -105,6 +121,7 @@ export type ScannerReplayResult = {
     averageMotionScore: number;
     averageChirpCoherence?: number;
     averageRxCoherence?: number;
+    averageRxCoherenceBeforeCalibration?: number;
     averageTargetConfidence?: number;
     dominantSignalQuality: ScannerFrameAnalysis['signalQuality'];
     qualityFlags: string[];

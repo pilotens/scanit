@@ -4,14 +4,19 @@ import type {
   ScannerCalibration,
   ScannerFrameAnalysis,
 } from './radio';
+import type { ScannerInterpretation } from './scannerInterpretation';
 import type {
   ScannerPhysiologicalSeparation,
   ScannerSignalQualityGate,
+  ScannerTargetTrackingSummary,
 } from './scannerSignal';
 import type { RfPosition } from './scanning';
 
 export type ScannerLabSource = 'emulator' | 'gateway';
-export type ScannerProcessingVersion = 'scanner-pipeline-v1' | 'scanner-pipeline-v2';
+export type ScannerProcessingVersion =
+  | 'scanner-pipeline-v1'
+  | 'scanner-pipeline-v2'
+  | 'scanner-pipeline-v3';
 
 export type ScannerLabCaptureOptions = {
   label?: string;
@@ -74,18 +79,23 @@ export type ScannerReplaySample = {
   signalQuality: ScannerFrameAnalysis['signalQuality'];
   motionScore: number;
   qualityFlags: string[];
+  chirpCoherence?: number;
+  rxCoherence?: number;
+  targetConfidence?: number;
 };
 
 export type ScannerReplayResult = {
   recordingId: string;
   processedAt: string;
-  processingVersion: 'scanner-pipeline-v2';
+  processingVersion: 'scanner-pipeline-v3';
   manifest: ScannerRecordingManifest;
   calibration: ScannerCalibration;
   samples: ScannerReplaySample[];
   profile: number[];
   qualityGate: ScannerSignalQualityGate;
   physiology: ScannerPhysiologicalSeparation;
+  targetTracking: ScannerTargetTrackingSummary;
+  interpretation: ScannerInterpretation;
   summary: {
     processedFrameCount: number;
     averageSignalToNoiseRatioDb: number;
@@ -93,6 +103,9 @@ export type ScannerReplayResult = {
     averageTargetRangeMeters?: number;
     rangeStandardDeviationMeters?: number;
     averageMotionScore: number;
+    averageChirpCoherence?: number;
+    averageRxCoherence?: number;
+    averageTargetConfidence?: number;
     dominantSignalQuality: ScannerFrameAnalysis['signalQuality'];
     qualityFlags: string[];
   };

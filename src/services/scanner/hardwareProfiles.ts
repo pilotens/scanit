@@ -4,6 +4,7 @@ export const scannerHardwareProfiles: ScannerHardwareProfile[] = [
   {
     id: 'infineon-bgt60tr13c',
     name: 'Infineon BGT60TR13C',
+    track: 'vital-motion',
     modality: 'mmwave-fmcw',
     transport: ['usb', 'wifi', 'bluetooth'],
     rawDataAccess: true,
@@ -12,18 +13,19 @@ export const scannerHardwareProfiles: ScannerHardwareProfile[] = [
     role: 'mechanical-heart-sensing',
     maturity: 'selected-poc',
     strengths: [
-      '1 Tx och 3 Rx möjliggör range-, fas- och vinkelanalys.',
-      'Utvecklingskortet kan vidarebefordra rådata över USB.',
-      'Connected Sensor Kit har Wi-Fi och Bluetooth för egen firmware.',
+      '1 Tx och 3 Rx möjliggör range-, fas- och koherensanalys.',
+      'Utvecklingskortet kan vidarebefordra full RX × chirp × ADC-rådata över USB.',
+      'Lämpligt för kontaktlös andning och periodisk mekanisk mikrorörelse.',
     ],
     limitations: [
       'Begränsad penetration i vattenrik vävnad.',
-      'Mäter främst mikrorörelse och ytnära mekanik, inte kranskärl direkt.',
+      'Kan inte avbilda hjärtanatomi, blodflöde eller kranskärl.',
     ],
   },
   {
     id: 'novelda-x7-direct',
     name: 'NOVELDA X7 Radar Direct',
+    track: 'vital-motion',
     modality: 'uwb-impulse',
     transport: ['usb'],
     rawDataAccess: true,
@@ -33,16 +35,17 @@ export const scannerHardwareProfiles: ScannerHardwareProfile[] = [
     maturity: 'secondary-poc',
     strengths: [
       'Rå basbandsdata och Python/C++ API.',
-      'Bred bandbredd för lager- och reflektivitetsstudier.',
+      'Bred bandbredd för experiment med lagergränser och reflektivitetsförändring.',
     ],
     limitations: [
-      'Första utvecklingsflödet är PC-baserat.',
+      'Enkanalig mätning är inte multistatisk tomografi.',
       'Kräver egen antenn-, kontakt- och vävnadskalibrering.',
     ],
   },
   {
     id: 'esp32-c5-csi-pair',
     name: 'ESP32-C5/C6 CSI-par',
+    track: 'vital-motion',
     modality: 'wifi-csi',
     transport: ['wifi', 'usb'],
     rawDataAccess: true,
@@ -52,11 +55,33 @@ export const scannerHardwareProfiles: ScannerHardwareProfile[] = [
     maturity: 'research-track',
     strengths: [
       'Billig och reproducerbar kanaldata från OFDM-subbärare.',
-      'Bra för jämförelse mot användarens egen baslinje.',
+      'Användbar som jämförelsekanal för andning, rörelse och personlig baslinje.',
     ],
     limitations: [
       'Låg spatial upplösning och hög känslighet för multipath.',
-      'Två noder och kontrollerad geometri rekommenderas.',
+      'Vanlig Wi-Fi CSI kan inte avbilda interna organ eller kranskärl.',
+    ],
+  },
+  {
+    id: 'multistatic-wifi-band-tomography-array',
+    name: 'Multistatisk mikrovågstomografi-array',
+    track: 'microwave-tomography',
+    modality: 'microwave-tomography',
+    transport: ['usb', 'wifi'],
+    rawDataAccess: true,
+    channels: 16,
+    frequencyRange: 'Experimentellt 2–8 GHz stegat koherent svep',
+    role: 'multistatic-tomography',
+    maturity: 'research-track',
+    strengths: [
+      'Separata sändar-/mottagarvägar runt bröstkorgen ger multistatisk täckning.',
+      'Koherent bredbandssvep kan användas för invers spridning och relativa kontrastkartor.',
+      'Appen kan styra geometri, kalibrering, datainsamling och reproducerbar rekonstruktion.',
+    ],
+    limitations: [
+      'Detta är specialbyggd koherent mikrovågshårdvara, inte en vanlig telefon eller Wi-Fi-router.',
+      'Första rekonstruktionen visar relativ spridningskontrast, inte verifierad anatomi.',
+      'Blodflöde, kranskärl, förträngning, ischemi och infarkt förblir ovaliderade forskningsmål.',
     ],
   },
 ];

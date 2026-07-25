@@ -12,6 +12,9 @@ dependencies = [
   "websockets>=15,<17",
 ]
 
+[project.scripts]
+scanit-wifi-gateway = "scanit_wifi_gateway.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["scanit_wifi_gateway*"]

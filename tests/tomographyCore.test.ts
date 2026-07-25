@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { scannerHardwareProfiles } from '@/services/scanner/hardwareProfiles';
 import { createCircularTomographyGeometry } from '@/services/scanner/tomography/geometry';
+import { SimulatedTomographyProvider } from '@/services/scanner/tomography/provider';
 import { reconstructTomography } from '@/services/scanner/tomography/reconstruction';
 import {
   createTomographyFrequencySweep,
   simulateTomographyCapture,
 } from '@/services/scanner/tomography/simulator';
+import { validateTomographyCapture } from '@/services/scanner/tomography/validation';
 
 const grid = {
   width: 31,
@@ -76,6 +78,61 @@ describe('multistatic microwave tomography research track', () => {
       ),
     ).toBeLessThan(0.04);
     expect(reconstruction.peak?.normalizedContrast).toBeCloseTo(1, 6);
+  });
+
+  it('uses one provider contract for background and subject acquisition', async () => {
+    const provider = new SimulatedTomographyProvider();
+    const geometry = createCircularTomographyGeometry({ antennaCount: 12 });
+    const sweep = createTomographyFrequencySweep({ frequencyCount: 16 });
+    await provider.connect();
+    await provider.configure({ geometry, sweep });
+    const background = await provider.capture({
+      id: 'provider-background',
+      calibrationRole: 'background',
+    });
+    provider.setScatterers([
+      { xMeters: 0.02, yMeters: 0.01, amplitude: 0.004 },
+    ]);
+    const subject = await provider.capture({
+      id: 'provider-subject',
+      calibrationRole: 'subject',
+      referenceCaptureId: background.id,
+    });
+    await provider.disconnect();
+
+    expect(validateTomographyCapture(background).valid).toBe(true);
+    expect(validateTomographyCapture(subject).valid).toBe(true);
+    expect(subject.referenceCaptureId).toBe(background.id);
+    expect(subject.measurements).toHaveLength(background.measurements.length);
+  });
+
+  it('rejects malformed measurement sets before inverse reconstruction', () => {
+    const geometry = createCircularTomographyGeometry({ antennaCount: 12 });
+    const frequenciesHz = createTomographyFrequencySweep({ frequencyCount: 16 })
+      .frequenciesHz;
+    const background = simulateTomographyCapture({
+      id: 'invalid-background',
+      geometry,
+      calibrationRole: 'background',
+      frequenciesHz,
+      noiseAmplitude: 0,
+    });
+    const subject = simulateTomographyCapture({
+      id: 'invalid-subject',
+      geometry,
+      calibrationRole: 'subject',
+      frequenciesHz,
+      noiseAmplitude: 0,
+      scatterers: [{ xMeters: 0, yMeters: 0, amplitude: 0.004 }],
+    });
+    subject.measurements.push({ ...subject.measurements[0]! });
+
+    const validation = validateTomographyCapture(subject);
+    const reconstruction = reconstructTomography({ subject, background, grid });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.errors.some((error) => error.includes('Duplicate'))).toBe(true);
+    expect(reconstruction.status).toBe('incompatible-captures');
   });
 
   it('rejects insufficient geometry and never promotes contrast into medical claims', () => {

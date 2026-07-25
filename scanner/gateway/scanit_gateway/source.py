@@ -40,12 +40,13 @@ class RadarSource(ABC):
 
 
 class FakeRadarSource(RadarSource):
+    """Deterministic real-ADC FMCW cube used to test the physical path."""
+
     source_name = "deterministic-fake"
 
     def __init__(self) -> None:
         self._connected = False
         self._config = FmcwConfig()
-        self._phase = 0.0
 
     def connect(self) -> dict[str, Any]:
         self._connected = True
@@ -67,16 +68,30 @@ class FakeRadarSource(RadarSource):
             self.connect()
         frame_period = 1 / self._config.frame_rate_hz
         time.sleep(min(frame_period, 0.01))
-        self._phase += 2 * math.pi * 1.15 * frame_period
+
         samples: list[float] = []
         target_bin = 9
+        chirps = self._config.chirps_per_frame
+        adc_samples = self._config.samples_per_chirp
+        chirp_period = self._config.chirp_repetition_time_seconds
+        frame_start = sequence * frame_period
+
         for channel in range(3):
-            channel_phase = self._phase + channel * 0.17
-            for sample in range(self._config.samples_per_chirp):
-                angle = 2 * math.pi * target_bin * sample / self._config.samples_per_chirp
-                value = 0.65 * math.cos(angle + channel_phase)
-                value += 0.05 * math.cos(2 * math.pi * 3 * sample / self._config.samples_per_chirp)
-                samples.extend((value, 0.0))
+            for chirp in range(chirps):
+                slow_time = frame_start + chirp * chirp_period
+                respiration_phase = 0.42 * math.sin(2 * math.pi * 0.24 * slow_time)
+                cardiac_phase = 0.055 * math.sin(2 * math.pi * 1.15 * slow_time)
+                channel_phase = channel * 0.17
+                for sample in range(adc_samples):
+                    range_angle = 2 * math.pi * target_bin * sample / adc_samples
+                    value = 0.65 * math.cos(
+                        range_angle + respiration_phase + cardiac_phase + channel_phase
+                    )
+                    value += 0.05 * math.cos(2 * math.pi * 3 * sample / adc_samples)
+                    # BGT60TR13C delivers a real ADC signal. SCN1 stores it in the
+                    # established interleaved container with an explicit zero Q value.
+                    samples.extend((value, 0.0))
+
         return frame_metadata(
             config=self._config,
             session_id=session_id,
@@ -84,8 +99,10 @@ class FakeRadarSource(RadarSource):
             sequence=sequence,
             samples=samples,
             channels=3,
+            samples_per_channel=chirps * adc_samples,
             source=self.source_name,
             simulated=True,
+            raw_cube_shape=[3, chirps, adc_samples],
         )
 
     def status(self) -> dict[str, Any]:
@@ -109,8 +126,10 @@ def frame_metadata(
     sequence: int,
     samples: list[float],
     channels: int,
+    samples_per_channel: int,
     source: str,
     simulated: bool,
+    raw_cube_shape: list[int],
 ) -> dict[str, Any]:
     return {
         "frameId": str(uuid.uuid4()),
@@ -123,16 +142,23 @@ def frame_metadata(
         "bandwidthHz": config.bandwidth_hz,
         "sampleRateHz": config.sample_rate_hz,
         "channels": channels,
-        "samplesPerChannel": config.samples_per_chirp,
+        "samplesPerChannel": samples_per_channel,
+        "sampleFormat": "real-adc-in-iq-container",
+        "dataLayout": "rx-chirp-sample",
         "samples": samples,
         "antennaConfigurationId": f"bgt60tr13c-rx{config.rx_mask:02x}-tx{config.tx_mask:02x}",
         "acquisition": {
             "source": source,
             "frameRateHz": config.frame_rate_hz,
+            "frameRepetitionTimeSeconds": 1 / config.frame_rate_hz,
             "chirpsPerFrame": config.chirps_per_frame,
+            "chirpRepetitionTimeSeconds": config.chirp_repetition_time_seconds,
             "samplesPerChirp": config.samples_per_chirp,
             "rxMask": config.rx_mask,
             "txMask": config.tx_mask,
+            "rawCubeShape": raw_cube_shape,
+            "chirpReduction": "none",
+            "adcSignalType": "real",
         },
         "qualityFlags": [],
         "isSimulated": simulated,

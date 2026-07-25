@@ -87,6 +87,7 @@ npm run lint
 - [Architecture](docs/ARCHITECTURE.md)
 - [Scanner architecture](docs/SCANNER_ARCHITECTURE.md)
 - [Dual-track scanner architecture](docs/SCANNER_DUAL_TRACK_ARCHITECTURE.md)
+- [Tomography gateway protocol](docs/TOMOGRAPHY_GATEWAY_PROTOCOL.md)
 - [Scanner signal quality](docs/SCANNER_SIGNAL_QUALITY.md)
 - [Physical scanner adapter](docs/SCANNER_PHYSICAL_ADAPTER.md)
 - [Scanner PoC](docs/SCANNER_POC.md)

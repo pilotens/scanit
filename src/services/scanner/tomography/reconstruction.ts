@@ -21,6 +21,7 @@ import {
   evaluateTomographyQuality,
   tomographyApertureCoverageDegrees,
 } from './quality';
+import { validateTomographyCapture } from './validation';
 
 const SPEED_OF_LIGHT_METERS_PER_SECOND = 299_792_458;
 
@@ -83,7 +84,12 @@ export function reconstructTomography(input: {
   grid?: TomographyGrid;
 }): TomographyReconstruction {
   const { subject, background } = input;
-  const compatible = capturesAreTomographicallyCompatible(subject, background);
+  const subjectValidation = validateTomographyCapture(subject);
+  const backgroundValidation = validateTomographyCapture(background);
+  const compatible =
+    subjectValidation.valid &&
+    backgroundValidation.valid &&
+    capturesAreTomographicallyCompatible(subject, background);
   const calibration = createTomographyBackgroundCalibration(background);
   const differentialMeasurements = compatible
     ? createDifferentialTomographyMeasurements(subject, background)
@@ -105,6 +111,10 @@ export function reconstructTomography(input: {
   const warnings: string[] = [
     'Första ordningens backprojection ignorerar stark multipath och full icke-linjär vävnadsspridning.',
     'Kartan måste jämföras med phantom och oberoende medicinsk bildreferens innan anatomiska slutsatser prövas.',
+    ...subjectValidation.warnings.map((warning) => `Subjekt: ${warning}`),
+    ...backgroundValidation.warnings.map((warning) => `Bakgrund: ${warning}`),
+    ...subjectValidation.errors.map((error) => `Subjektfel: ${error}`),
+    ...backgroundValidation.errors.map((error) => `Bakgrundsfel: ${error}`),
   ];
 
   if (!compatible) {
@@ -123,7 +133,7 @@ export function reconstructTomography(input: {
       qualityGate,
       differentialMeasurementCount: 0,
       claims: claims(),
-      warnings,
+      warnings: [...new Set(warnings)],
     };
   }
 
@@ -143,7 +153,7 @@ export function reconstructTomography(input: {
       qualityGate,
       differentialMeasurementCount: differentialMeasurements.length,
       claims: claims(),
-      warnings,
+      warnings: [...new Set(warnings)],
     };
   }
 
@@ -222,6 +232,6 @@ export function reconstructTomography(input: {
     qualityGate,
     differentialMeasurementCount: differentialMeasurements.length,
     claims: claims(),
-    warnings,
+    warnings: [...new Set(warnings)],
   };
 }

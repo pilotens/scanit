@@ -20,6 +20,9 @@ export type ScannerFrameTiming = {
   anchorWallClockUnixNs?: string;
 };
 
+/** Shared name used by physical RF and Wi-Fi sensing frames. */
+export type ScannerClockDescriptor = ScannerFrameTiming;
+
 export type ScannerClockAnchor = {
   clockDomain: string;
   monotonicTimestampNs: string;

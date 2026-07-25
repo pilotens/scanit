@@ -62,7 +62,7 @@ class InfineonRdkSource(RadarSource):
         )
         simple = FmcwSimpleSequenceConfig(
             frame_repetition_time_s=1 / config.frame_rate_hz,
-            chirp_repetition_time_s=config.chirp_repetition_time_s,
+            chirp_repetition_time_s=config.chirp_repetition_time_seconds,
             num_chirps=config.chirps_per_frame,
             tdm_mimo=False,
             chirp=chirp,
@@ -87,31 +87,41 @@ class InfineonRdkSource(RadarSource):
         cube = frame_contents[0]
         if len(cube.shape) != 3:
             raise RuntimeError(f"Unexpected radar cube dimensions: {cube.shape!r}")
+
+        # The RDK returns [Rx antenna, chirp, ADC sample]. Preserve the complete
+        # cube. Chirp averaging would destroy Doppler, within-frame coherence and
+        # information required for reliable phase tracking.
         channels, chirps, adc_samples = (int(value) for value in cube.shape)
         if adc_samples != self._config.samples_per_chirp:
             raise RuntimeError(
                 f"Configured {self._config.samples_per_chirp} ADC samples but received {adc_samples}."
             )
+        if chirps != self._config.chirps_per_frame:
+            raise RuntimeError(
+                f"Configured {self._config.chirps_per_frame} chirps but received {chirps}."
+            )
 
-        averaged = cube.mean(axis=1)
         samples: list[float] = []
         for channel in range(channels):
-            for sample in range(adc_samples):
-                samples.extend((float(averaged[channel, sample]), 0.0))
+            for chirp_index in range(chirps):
+                for sample in range(adc_samples):
+                    # BGT60TR13C exposes a real ADC signal. The transport keeps
+                    # backwards-compatible interleaved storage and explicitly
+                    # marks Q as synthetic zero in the metadata.
+                    samples.extend((float(cube[channel, chirp_index, sample]), 0.0))
 
-        frame = frame_metadata(
+        return frame_metadata(
             config=self._config,
             session_id=session_id,
             position=position,
             sequence=sequence,
             samples=samples,
             channels=channels,
+            samples_per_channel=chirps * adc_samples,
             source=self.source_name,
             simulated=False,
+            raw_cube_shape=[channels, chirps, adc_samples],
         )
-        frame["acquisition"]["rawCubeShape"] = [channels, chirps, adc_samples]
-        frame["acquisition"]["chirpReduction"] = "mean"
-        return frame
 
     def status(self) -> dict[str, Any]:
         return {
@@ -120,6 +130,7 @@ class InfineonRdkSource(RadarSource):
             "boardUuid": self._board_uuid,
             "sdkVersion": self._sdk_version,
             "config": self._config.public_dict(),
+            "rawCubePreserved": True,
         }
 
     def close(self) -> None:

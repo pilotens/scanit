@@ -9,12 +9,11 @@ import { encryptedStorage } from '@/services/storage/encryptedStorage';
 
 import { crc32 } from '../protocol/crc32';
 import { decodeRadioFrame, encodeRadioFrame } from '../protocol/frameCodec';
+import { scannerTimestampNs } from '../timing/clockModel';
 import { base64ToBytes, bytesToBase64 } from './base64';
 
 const MANIFEST_PREFIX = 'scanner.recording.manifest.v1.';
 const CHUNK_PREFIX = 'scanner.recording.chunk.v1.';
-// Raw FMCW cubes are materially larger than chirp-averaged profiles. Keep each
-// encrypted SQLite record bounded so individual reads and migrations remain manageable.
 const PACKETS_PER_CHUNK = 4;
 const MAX_RECORDINGS = 40;
 const MAX_RECORDING_BYTES = 128 * 1024 * 1024;
@@ -40,8 +39,8 @@ export const computeAggregateCrc32 = (packets: Uint8Array[]) =>
 const estimateFrameRate = (frames: RawRadioFrame[]) => {
   if (frames.length < 2) return 0;
   try {
-    const first = BigInt(frames[0]!.timestampNs);
-    const last = BigInt(frames.at(-1)!.timestampNs);
+    const first = scannerTimestampNs(frames[0]!);
+    const last = scannerTimestampNs(frames.at(-1)!);
     const elapsedSeconds = Number(last - first) / 1_000_000_000;
     return elapsedSeconds > 0 ? (frames.length - 1) / elapsedSeconds : 0;
   } catch {
@@ -76,11 +75,20 @@ export const scannerRecordingRepository = {
   async save(input: SaveScannerRecordingInput): Promise<ScannerRecordingManifest> {
     const { frames } = input;
     if (frames.length < Math.max(6, input.calibrationFrameCount + 2)) {
-      throw new Error('Recording requires calibration frames and at least two analysis frames.');
+      throw new Error(
+        'Recording requires calibration frames and at least two analysis frames.',
+      );
     }
     const first = frames[0]!;
-    if (frames.some((frame) => frame.modality !== first.modality || frame.position !== first.position)) {
-      throw new Error('A recording may contain only one modality and one scanner position.');
+    if (
+      frames.some(
+        (frame) =>
+          frame.modality !== first.modality || frame.position !== first.position,
+      )
+    ) {
+      throw new Error(
+        'A recording may contain only one modality and one scanner position.',
+      );
     }
 
     const packets = frames.map(encodeRadioFrame);
@@ -103,14 +111,36 @@ export const scannerRecordingRepository = {
       });
     }
 
-    const acquisitionFlags = first.modality === 'mmwave-fmcw' && frames.some(
-      (frame) =>
-        frame.dataLayout !== 'rx-chirp-sample' ||
-        (frame.acquisition?.chirpsPerFrame ?? 0) <= 1 ||
-        frame.acquisition?.chirpReduction !== 'none',
-    )
-      ? ['raw-cube-not-preserved']
-      : [];
+    const acquisitionFlags =
+      first.modality === 'mmwave-fmcw' &&
+      frames.some(
+        (frame) =>
+          frame.dataLayout !== 'rx-chirp-sample' ||
+          (frame.acquisition?.chirpsPerFrame ?? 0) <= 1 ||
+          frame.acquisition?.chirpReduction !== 'none',
+      )
+        ? ['raw-cube-not-preserved']
+        : [];
+    const timedFrames = frames.filter(
+      ({ timing }) =>
+        timing?.monotonicTimestampNs &&
+        timing.timestampSource !== 'legacy-wall-clock',
+    );
+    const clockDomains = unique(
+      timedFrames.map(({ timing }) => timing!.clockDomain),
+    );
+    const timingFlags = [
+      ...(timedFrames.length < frames.length * 0.98
+        ? ['monotonic-timing-incomplete']
+        : []),
+      ...(clockDomains.length !== 1 ? ['multiple-clock-domains'] : []),
+      ...(timedFrames.some(({ timing }) => timing!.uncertaintyNs > 25_000_000)
+        ? ['timestamp-uncertainty-high']
+        : []),
+    ];
+    const firstTimestampNs = String(scannerTimestampNs(first));
+    const lastTimestampNs = String(scannerTimestampNs(frames.at(-1)!));
+
     const manifest: ScannerRecordingManifest = {
       schemaVersion: 1,
       id,
@@ -123,19 +153,20 @@ export const scannerRecordingRepository = {
       position: first.position,
       hardwareProfileId: input.hardwareProfileId,
       protocolVersion: 1,
-      processingVersion: 'scanner-pipeline-v3',
+      processingVersion: 'scanner-pipeline-v4',
       frameCount: frames.length,
       calibrationFrameCount: input.calibrationFrameCount,
       dataChunkCount: chunks.length,
       totalBytes,
       aggregateCrc32: computeAggregateCrc32(packets),
-      firstTimestampNs: first.timestampNs,
-      lastTimestampNs: frames.at(-1)!.timestampNs,
+      firstTimestampNs,
+      lastTimestampNs,
       estimatedFrameRateHz: estimateFrameRate(frames),
       sequenceGaps: sequenceGaps(frames),
       qualityFlags: unique([
         ...frames.flatMap(({ qualityFlags }) => qualityFlags),
         ...acquisitionFlags,
+        ...timingFlags,
       ]),
       tags: unique(input.tags ?? []),
       notes: input.notes ?? [],
@@ -160,7 +191,9 @@ export const scannerRecordingRepository = {
   },
 
   async list(): Promise<ScannerRecordingManifest[]> {
-    const records = await encryptedStorage.list<ScannerRecordingManifest>(MANIFEST_PREFIX);
+    const records = await encryptedStorage.list<ScannerRecordingManifest>(
+      MANIFEST_PREFIX,
+    );
     return records
       .map(({ value }) => value)
       .filter(({ schemaVersion }) => schemaVersion === 1)
@@ -168,39 +201,61 @@ export const scannerRecordingRepository = {
   },
 
   async load(id: string): Promise<ScannerRecording> {
-    const manifest = await encryptedStorage.get<ScannerRecordingManifest>(manifestKey(id));
-    if (!manifest || manifest.schemaVersion !== 1) throw new Error('Scanner recording was not found.');
+    const manifest = await encryptedStorage.get<ScannerRecordingManifest>(
+      manifestKey(id),
+    );
+    if (!manifest || manifest.schemaVersion !== 1) {
+      throw new Error('Scanner recording was not found.');
+    }
 
     const packets: Uint8Array[] = [];
     for (let index = 0; index < manifest.dataChunkCount; index += 1) {
-      const chunk = await encryptedStorage.get<ScannerRecordingChunk>(chunkKey(id, index));
+      const chunk = await encryptedStorage.get<ScannerRecordingChunk>(
+        chunkKey(id, index),
+      );
       if (!chunk || chunk.recordingId !== id || chunk.index !== index) {
-        throw new Error(`Scanner recording chunk ${index} is missing or inconsistent.`);
+        throw new Error(
+          `Scanner recording chunk ${index} is missing or inconsistent.`,
+        );
       }
       if (chunk.packetCount !== chunk.packetsBase64.length) {
-        throw new Error(`Scanner recording chunk ${index} has an invalid packet count.`);
+        throw new Error(
+          `Scanner recording chunk ${index} has an invalid packet count.`,
+        );
       }
       packets.push(...chunk.packetsBase64.map(base64ToBytes));
     }
 
     if (packets.length !== manifest.frameCount) {
-      throw new Error('Scanner recording frame count does not match its manifest.');
+      throw new Error(
+        'Scanner recording frame count does not match its manifest.',
+      );
     }
     const totalBytes = packets.reduce((sum, packet) => sum + packet.length, 0);
-    if (totalBytes !== manifest.totalBytes) throw new Error('Scanner recording byte length mismatch.');
+    if (totalBytes !== manifest.totalBytes) {
+      throw new Error('Scanner recording byte length mismatch.');
+    }
     if (computeAggregateCrc32(packets) !== manifest.aggregateCrc32) {
       throw new Error('Scanner recording aggregate CRC verification failed.');
     }
 
     const frames = packets.map(decodeRadioFrame);
-    if (frames.some((frame) => frame.position !== manifest.position || frame.modality !== manifest.modality)) {
+    if (
+      frames.some(
+        (frame) =>
+          frame.position !== manifest.position ||
+          frame.modality !== manifest.modality,
+      )
+    ) {
       throw new Error('Scanner recording frames do not match the manifest.');
     }
     return { manifest, frames };
   },
 
   async remove(id: string): Promise<void> {
-    const manifest = await encryptedStorage.get<ScannerRecordingManifest>(manifestKey(id));
+    const manifest = await encryptedStorage.get<ScannerRecordingManifest>(
+      manifestKey(id),
+    );
     if (manifest) {
       await Promise.all(
         Array.from({ length: manifest.dataChunkCount }, (_, index) =>
@@ -218,6 +273,8 @@ export const scannerRecordingRepository = {
 
   async enforceRetention(): Promise<void> {
     const manifests = await this.list();
-    await Promise.all(manifests.slice(MAX_RECORDINGS).map(({ id }) => this.remove(id)));
+    await Promise.all(
+      manifests.slice(MAX_RECORDINGS).map(({ id }) => this.remove(id)),
+    );
   },
 };

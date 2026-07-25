@@ -17,8 +17,12 @@ const median = (values: number[]) => {
     : (sorted[middle] ?? 0);
 };
 
-const qualityFromSnr = (snr: number, motionPenalty: number): ScannerFrameAnalysis['signalQuality'] => {
-  const adjusted = snr - motionPenalty;
+const qualityFromSnr = (
+  snr: number,
+  motionPenalty: number,
+  coherencePenalty: number,
+): ScannerFrameAnalysis['signalQuality'] => {
+  const adjusted = snr - motionPenalty - coherencePenalty;
   if (adjusted >= 18) return 'excellent';
   if (adjusted >= 11) return 'good';
   if (adjusted >= 6) return 'fair';
@@ -31,7 +35,7 @@ export class ScannerSignalPipeline {
 
   calibrate(frames: RawRadioFrame[], hardwareProfileId: string): ScannerCalibration {
     if (frames.length < 4) throw new Error('At least four frames are required for calibration.');
-    const profiles = frames.map(computeBasicProfile);
+    const profiles = frames.map((frame) => computeBasicProfile(frame));
     const length = Math.min(...profiles.map(({ profile }) => profile.length));
     const profile = Array.from({ length }, (_, index) =>
       mean(profiles.map((item) => item.profile[index] ?? 0)),
@@ -53,8 +57,8 @@ export class ScannerSignalPipeline {
     return this.calibration;
   }
 
-  process(frame: RawRadioFrame): ScannerFrameAnalysis {
-    const basic = computeBasicProfile(frame);
+  process(frame: RawRadioFrame, targetBinOverride?: number): ScannerFrameAnalysis {
+    const basic = computeBasicProfile(frame, targetBinOverride);
     const baseline = this.calibration?.profile ?? basic.profile.map(() => 0);
     const length = Math.min(basic.profile.length, baseline.length);
     const baselineDeltaProfile = Array.from({ length }, (_, index) =>
@@ -84,13 +88,41 @@ export class ScannerSignalPipeline {
     const motionPenalty = acceleration
       ? Math.hypot(acceleration.x, acceleration.y, acceleration.z) * 30
       : 0;
+    const coherencePenalty =
+      (basic.chirpCoherence === undefined ? 0 : Math.max(0, 0.55 - basic.chirpCoherence) * 12) +
+      (basic.rxCoherence === undefined ? 0 : Math.max(0, 0.25 - basic.rxCoherence) * 8);
     const motionScore = clamp(
       mean(baselineDeltaProfile) * 4 + Math.abs(displacementMillimeters ?? 0) / 2,
+    );
+    const targetConfidence = clamp(
+      Math.min(1, Math.max(0, signalToNoiseRatioDb / 20)) * 0.45 +
+        (basic.chirpCoherence ?? 0.5) * 0.35 +
+        (basic.rxCoherence ?? 0.5) * 0.2,
     );
     const qualityFlags = [...frame.qualityFlags];
     if (motionPenalty > 4) qualityFlags.push('device-motion');
     if (signalToNoiseRatioDb < 6) qualityFlags.push('low-snr');
     if (standardDeviation(frame.samples) < 1e-5) qualityFlags.push('flat-signal');
+    if (basic.chirpCoherence !== undefined && basic.chirpCoherence < 0.35) {
+      qualityFlags.push('low-chirp-coherence');
+    }
+    if (basic.rxCoherence !== undefined && basic.rxCoherence < 0.2) {
+      qualityFlags.push('low-rx-coherence');
+    }
+    if (
+      frame.acquisition?.chirpsPerFrame &&
+      frame.acquisition.chirpsPerFrame > 1 &&
+      frame.acquisition.chirpReduction !== 'none'
+    ) {
+      qualityFlags.push('chirp-information-lost');
+    }
+    if (
+      basic.targetRangeMeters !== undefined &&
+      basic.targetRangeMeters < 0.2 &&
+      frame.antennaConfigurationId.includes('bgt60tr13c')
+    ) {
+      qualityFlags.push('near-field-unvalidated');
+    }
 
     return {
       sequence: frame.sequence,
@@ -104,8 +136,12 @@ export class ScannerSignalPipeline {
       displacementMillimeters,
       motionScore,
       signalToNoiseRatioDb,
-      signalQuality: qualityFromSnr(signalToNoiseRatioDb, motionPenalty),
-      qualityFlags,
+      signalQuality: qualityFromSnr(signalToNoiseRatioDb, motionPenalty, coherencePenalty),
+      qualityFlags: [...new Set(qualityFlags)],
+      rxCoherence: basic.rxCoherence,
+      chirpCoherence: basic.chirpCoherence,
+      targetConfidence,
+      targetBinTracked: targetBinOverride !== undefined,
     };
   }
 }

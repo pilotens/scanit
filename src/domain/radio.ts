@@ -1,4 +1,5 @@
 import type { RfPosition } from './scanning';
+import type { ScannerFrameTiming } from './scannerTiming';
 
 export type RadioModality =
   | 'mmwave-fmcw'
@@ -20,7 +21,9 @@ export type RawRadioFrame = {
   frameId: string;
   sessionId: string;
   sequence: number;
+  /** Canonical scanner-clock timestamp. Legacy recordings may still contain wall-clock nanoseconds. */
   timestampNs: string;
+  timing?: ScannerFrameTiming;
   modality: RadioModality;
   position: RfPosition;
   centerFrequencyHz: number;
@@ -57,6 +60,34 @@ export type RawRadioFrame = {
   isSimulated: boolean;
 };
 
+export type ScannerRxCalibrationChannel = {
+  channel: number;
+  gainCorrection: number;
+  phaseCorrectionRadians: number;
+  measuredMagnitude: number;
+  measuredPhaseRadians: number;
+  amplitudeCoefficientOfVariation: number;
+  phaseStandardDeviationRadians: number;
+  valid: boolean;
+};
+
+export type ScannerRxCalibration = {
+  version: 'scanner-rx-calibration-v1';
+  createdAt: string;
+  hardwareProfileId: string;
+  antennaConfigurationId: string;
+  frameCount: number;
+  referenceRxChannel: number;
+  targetBin: number;
+  targetRangeMeters?: number;
+  channels: ScannerRxCalibrationChannel[];
+  coherenceBefore: number;
+  coherenceAfter: number;
+  qualityScore: number;
+  deviceTemperatureCelsius?: number;
+  qualityFlags: string[];
+};
+
 export type ScannerCalibration = {
   id: string;
   modality: RadioModality;
@@ -66,6 +97,7 @@ export type ScannerCalibration = {
   profile: number[];
   noiseFloor: number;
   hardwareProfileId: string;
+  rxCalibration?: ScannerRxCalibration;
 };
 
 export type ScannerFrameAnalysis = {
@@ -83,9 +115,13 @@ export type ScannerFrameAnalysis = {
   signalQuality: 'poor' | 'fair' | 'good' | 'excellent';
   qualityFlags: string[];
   rxCoherence?: number;
+  rxCoherenceBeforeCalibration?: number;
   chirpCoherence?: number;
   targetConfidence?: number;
   targetBinTracked?: boolean;
+  rxCalibrationApplied?: boolean;
+  rxCalibrationQualityScore?: number;
+  timingUncertaintyMilliseconds?: number;
 };
 
 export type ScannerHardwareProfile = {

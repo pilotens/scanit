@@ -20,7 +20,7 @@ const timestampIntervalsSeconds = (frames: RawRadioFrame[]) => {
       const delta = Number(BigInt(frames[index]!.timestampNs) - BigInt(frames[index - 1]!.timestampNs));
       if (delta > 0) intervals.push(delta / 1_000_000_000);
     } catch {
-      // Invalid timestamps are represented by a missing interval and reduce the timing score.
+      // Missing interval reduces the timing score below.
     }
   }
   return intervals;
@@ -42,7 +42,7 @@ export function evaluateScannerSignalQuality(
 ): ScannerSignalQualityGate {
   if (!frames.length || !analyses.length) {
     return {
-      version: 'scanner-quality-v1',
+      version: 'scanner-quality-v2',
       evaluatedAt: new Date().toISOString(),
       verdict: 'rejected',
       score: 0,
@@ -81,11 +81,37 @@ export function evaluateScannerSignalQuality(
     ({ signalQuality, qualityFlags }) =>
       signalQuality !== 'poor' &&
       !qualityFlags.includes('device-motion') &&
-      !qualityFlags.includes('flat-signal'),
+      !qualityFlags.includes('flat-signal') &&
+      !qualityFlags.includes('chirp-information-lost'),
   ).length;
   const usableFrameRatio = usableFrames / analyses.length;
   const flatSignalRatio = analyses.filter(({ qualityFlags }) =>
     qualityFlags.includes('flat-signal'),
+  ).length / analyses.length;
+
+  const chirpCoherences = analyses.flatMap(({ chirpCoherence }) =>
+    chirpCoherence === undefined ? [] : [chirpCoherence],
+  );
+  const rxCoherences = analyses.flatMap(({ rxCoherence }) =>
+    rxCoherence === undefined ? [] : [rxCoherence],
+  );
+  const targetConfidences = analyses.flatMap(({ targetConfidence }) =>
+    targetConfidence === undefined ? [] : [targetConfidence],
+  );
+  const averageChirpCoherence = chirpCoherences.length ? mean(chirpCoherences) : 0.5;
+  const averageRxCoherence = rxCoherences.length ? mean(rxCoherences) : 0.5;
+  const averageTargetConfidence = targetConfidences.length ? mean(targetConfidences) : 0.5;
+  const mmwaveFrames = frames.filter(({ modality }) => modality === 'mmwave-fmcw');
+  const rawCubeRatio = mmwaveFrames.length
+    ? mmwaveFrames.filter(
+        ({ acquisition, dataLayout }) =>
+          dataLayout === 'rx-chirp-sample' &&
+          (acquisition?.chirpsPerFrame ?? 0) > 1 &&
+          acquisition?.chirpReduction === 'none',
+      ).length / mmwaveFrames.length
+    : 1;
+  const nearFieldRatio = analyses.filter(({ qualityFlags }) =>
+    qualityFlags.includes('near-field-unvalidated'),
   ).length / analyses.length;
 
   const packetScore = clamp(1 - sequenceGaps / Math.max(1, frames.length * 0.03));
@@ -97,8 +123,21 @@ export function evaluateScannerSignalQuality(
   const motionScore = clamp(1 - motionRatio / 0.2);
   const usableScore = clamp((usableFrameRatio - 0.35) / 0.55);
   const durationScore = clamp(durationSeconds / 5);
+  const chirpScore = clamp((averageChirpCoherence - 0.2) / 0.65);
+  const rxScore = clamp((averageRxCoherence - 0.1) / 0.65);
+  const targetConfidenceScore = clamp((averageTargetConfidence - 0.2) / 0.65);
 
   const metrics: ScannerSignalQualityGate['metrics'] = [
+    {
+      id: 'raw-cube-preservation',
+      label: 'Rå radarkub',
+      value: rawCubeRatio * 100,
+      unit: '% frames',
+      score: rawCubeRatio,
+      passed: rawCubeRatio >= 0.98,
+      blocking: mmwaveFrames.length > 0 && rawCubeRatio < 0.9,
+      detail: `${(rawCubeRatio * 100).toFixed(1)}% bevarar RX × chirp × ADC utan chirpmedelvärde.`,
+    },
     {
       id: 'packet-integrity',
       label: 'Paketintegritet',
@@ -118,6 +157,36 @@ export function evaluateScannerSignalQuality(
       passed: averageSnr >= 9,
       blocking: averageSnr < 3,
       detail: `${averageSnr.toFixed(1)} dB i genomsnitt.`,
+    },
+    {
+      id: 'chirp-coherence',
+      label: 'Chirpkoherens',
+      value: averageChirpCoherence * 100,
+      unit: '%',
+      score: chirpScore,
+      passed: averageChirpCoherence >= 0.55,
+      blocking: chirpCoherences.length > 0 && averageChirpCoherence < 0.2,
+      detail: `${(averageChirpCoherence * 100).toFixed(1)}% fasöverensstämmelse inom frames.`,
+    },
+    {
+      id: 'rx-coherence',
+      label: 'RX-koherens',
+      value: averageRxCoherence * 100,
+      unit: '%',
+      score: rxScore,
+      passed: averageRxCoherence >= 0.3,
+      blocking: false,
+      detail: `${(averageRxCoherence * 100).toFixed(1)}% överensstämmelse mellan mottagarantenner.`,
+    },
+    {
+      id: 'target-confidence',
+      label: 'Målförtroende',
+      value: averageTargetConfidence * 100,
+      unit: '%',
+      score: targetConfidenceScore,
+      passed: averageTargetConfidence >= 0.55,
+      blocking: averageTargetConfidence < 0.2,
+      detail: `${(averageTargetConfidence * 100).toFixed(1)}% kombinerat SNR- och koherensstöd.`,
     },
     {
       id: 'frame-timing',
@@ -170,6 +239,18 @@ export function evaluateScannerSignalQuality(
       detail: `${(motionRatio * 100).toFixed(1)}% rörelsekontaminerade frames.`,
     },
     {
+      id: 'validated-standoff',
+      label: 'Validerat avståndsområde',
+      value: nearFieldRatio * 100,
+      unit: '% nära',
+      score: 1 - nearFieldRatio,
+      passed: nearFieldRatio === 0,
+      blocking: nearFieldRatio > 0.5,
+      detail: nearFieldRatio
+        ? `${(nearFieldRatio * 100).toFixed(1)}% ligger under BGT60TR13C-spårets validerade 20 cm-gräns.`
+        : 'Målet ligger utanför den markerade, ännu ovaliderade närfältszonen.',
+    },
+    {
       id: 'usable-frames',
       label: 'Användbara frames',
       value: usableFrameRatio * 100,
@@ -193,17 +274,21 @@ export function evaluateScannerSignalQuality(
 
   const score = Math.round(
     100 *
-      (packetScore * 0.12 +
-        snrScore * 0.18 +
-        timingScore * 0.1 +
-        rangeScore * 0.12 +
-        targetScore * 0.08 +
-        phaseScore * 0.12 +
-        motionScore * 0.12 +
-        usableScore * 0.12 +
-        durationScore * 0.04),
+      (rawCubeRatio * 0.1 +
+        packetScore * 0.07 +
+        snrScore * 0.14 +
+        chirpScore * 0.12 +
+        rxScore * 0.05 +
+        targetConfidenceScore * 0.1 +
+        timingScore * 0.07 +
+        rangeScore * 0.08 +
+        targetScore * 0.06 +
+        phaseScore * 0.08 +
+        motionScore * 0.06 +
+        usableScore * 0.05 +
+        durationScore * 0.02),
   );
-  const blocking = metrics.filter(({ blocking }) => blocking);
+  const blocking = metrics.filter((metric) => metric.blocking);
   const failed = metrics.filter(({ passed }) => !passed);
 
   let verdict: ScannerSignalQualityGate['verdict'];
@@ -217,10 +302,10 @@ export function evaluateScannerSignalQuality(
       ? 'Mätningen är tekniskt godkänd för forskningsanalys och baslinjejämförelse.'
       : verdict === 'repeat'
         ? 'Upprepa mätningen med stabilare placering, längre vila och mindre rörelse.'
-        : 'Resultatet ska inte tolkas. Kontrollera anslutning, placering och råsignal innan ny mätning.';
+        : 'Resultatet ska inte tolkas. Kontrollera råkub, anslutning, avstånd och placering innan ny mätning.';
 
   return {
-    version: 'scanner-quality-v1',
+    version: 'scanner-quality-v2',
     evaluatedAt: new Date().toISOString(),
     verdict,
     score,

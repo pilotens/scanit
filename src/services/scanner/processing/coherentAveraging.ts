@@ -1,4 +1,8 @@
-import type { RawRadioFrame, ScannerFrameAnalysis } from '@/domain/radio';
+import type {
+  RawRadioFrame,
+  ScannerFrameAnalysis,
+  ScannerRxCalibration,
+} from '@/domain/radio';
 import type { ScannerSignalQualityGate } from '@/domain/scannerSignal';
 import type {
   ScannerClockModel,
@@ -11,6 +15,7 @@ import {
   mapReferenceEventsToScannerClock,
   scannerTimestampNs,
 } from '../timing/clockModel';
+import { computeBasicProfile } from './profile';
 
 const SPEED_OF_LIGHT_METERS_PER_SECOND = 299_792_458;
 const EPSILON = 1e-12;
@@ -41,6 +46,8 @@ const emptyResult = (
 const unwrapPhaseSeries = (
   frames: RawRadioFrame[],
   analyses: ScannerFrameAnalysis[],
+  targetBin: number | undefined,
+  rxCalibration: ScannerRxCalibration | undefined,
 ) => {
   let previous: number | undefined;
   let cumulative = 0;
@@ -48,7 +55,10 @@ const unwrapPhaseSeries = (
   for (let index = 0; index < Math.min(frames.length, analyses.length); index += 1) {
     const frame = frames[index]!;
     const analysis = analyses[index]!;
-    const current = analysis.phaseRadians;
+    const current =
+      targetBin === undefined
+        ? analysis.phaseRadians
+        : computeBasicProfile(frame, targetBin, rxCalibration).targetPhaseRadians;
     if (current === undefined || !Number.isFinite(current)) continue;
     if (previous !== undefined) cumulative += wrapPhase(current - previous);
     previous = current;
@@ -69,7 +79,11 @@ const interpolate = (
   points: Array<{ timestampNs: bigint; phase: number; usable: boolean }>,
   timestampNs: bigint,
 ) => {
-  if (points.length < 2 || timestampNs < points[0]!.timestampNs || timestampNs > points.at(-1)!.timestampNs) {
+  if (
+    points.length < 2 ||
+    timestampNs < points[0]!.timestampNs ||
+    timestampNs > points.at(-1)!.timestampNs
+  ) {
     return undefined;
   }
   let low = 0;
@@ -88,6 +102,16 @@ const interpolate = (
     phase: left.phase + (right.phase - left.phase) * fraction,
     usable: left.usable && right.usable,
   };
+};
+
+const removeLinearDrift = (values: number[]) => {
+  if (values.length < 2) return [...values];
+  const first = values[0] ?? 0;
+  const last = values.at(-1) ?? first;
+  return values.map(
+    (value, index) =>
+      value - first - ((last - first) * index) / (values.length - 1),
+  );
 };
 
 const correlation = (left: number[], right: number[]) => {
@@ -115,14 +139,32 @@ export function buildEventLockedCoherentAverage(input: {
   referenceEvents: ScannerReferenceEvent[];
   clockModel: ScannerClockModel;
   qualityGate: ScannerSignalQualityGate;
+  targetBin?: number;
+  rxCalibration?: ScannerRxCalibration;
 }): ScannerCoherentAverage {
-  const { frames, analyses, referenceEvents, clockModel, qualityGate } = input;
-  if (!referenceEvents.length) return emptyResult('no-reference-events', ['Ingen R-topp- eller PPG-pulsström finns.']);
+  const {
+    frames,
+    analyses,
+    referenceEvents,
+    clockModel,
+    qualityGate,
+    targetBin,
+    rxCalibration,
+  } = input;
+  if (!referenceEvents.length) {
+    return emptyResult('no-reference-events', [
+      'Ingen R-topp- eller PPG-pulsström finns.',
+    ]);
+  }
   if (qualityGate.verdict === 'rejected') {
-    return emptyResult('quality-rejected', ['Scannerinspelningen är tekniskt underkänd.']);
+    return emptyResult('quality-rejected', [
+      'Scannerinspelningen är tekniskt underkänd.',
+    ]);
   }
   if (clockModel.status === 'unavailable') {
-    return emptyResult('clock-unavailable', ['Referenshändelserna kan inte mappas till scannerklockan.']);
+    return emptyResult('clock-unavailable', [
+      'Referenshändelserna kan inte mappas till scannerklockan.',
+    ]);
   }
   if (clockModel.estimatedMappingUncertaintyNs > MAX_EVENT_UNCERTAINTY_NS) {
     const result = emptyResult('timing-unreliable', [
@@ -133,25 +175,46 @@ export function buildEventLockedCoherentAverage(input: {
     return result;
   }
 
-  const points = unwrapPhaseSeries(frames, analyses);
-  if (points.length < 8) return emptyResult('insufficient-events', ['För få faskontinuerliga scannerframes.']);
-  const mappedEvents = mapReferenceEventsToScannerClock(referenceEvents, clockModel);
+  const points = unwrapPhaseSeries(
+    frames,
+    analyses,
+    targetBin,
+    rxCalibration,
+  );
+  if (points.length < 8) {
+    return emptyResult('insufficient-events', [
+      'För få faskontinuerliga scannerframes.',
+    ]);
+  }
+  const mappedEvents = mapReferenceEventsToScannerClock(
+    referenceEvents,
+    clockModel,
+  );
   const frameRateHz = Math.max(1, qualityGate.estimatedFrameRateHz);
   const stepMilliseconds = Math.max(20, Math.min(50, 1000 / frameRateHz));
   const sampleOffsetsMilliseconds: number[] = [];
-  for (let offset = WINDOW_START_MS; offset <= WINDOW_END_MS + 0.1; offset += stepMilliseconds) {
+  for (
+    let offset = WINDOW_START_MS;
+    offset <= WINDOW_END_MS + 0.1;
+    offset += stepMilliseconds
+  ) {
     sampleOffsetsMilliseconds.push(Math.round(offset * 1000) / 1000);
   }
-  const wavelength = frames[0]!.centerFrequencyHz > 0
-    ? SPEED_OF_LIGHT_METERS_PER_SECOND / frames[0]!.centerFrequencyHz
-    : 0;
-  const millimetersPerRadian = wavelength > 0 ? (wavelength * 1000) / (4 * Math.PI) : 1;
+  const wavelength =
+    frames[0]!.centerFrequencyHz > 0
+      ? SPEED_OF_LIGHT_METERS_PER_SECOND / frames[0]!.centerFrequencyHz
+      : 0;
+  const millimetersPerRadian =
+    wavelength > 0 ? (wavelength * 1000) / (4 * Math.PI) : 1;
   const segments: number[][] = [];
   let rejectedBeatCount = referenceEvents.length - mappedEvents.length;
   const acceptedUncertainties: number[] = [];
 
   for (const event of mappedEvents) {
-    if (event.quality < 0.5 || event.combinedUncertaintyNs > MAX_EVENT_UNCERTAINTY_NS) {
+    if (
+      event.quality < 0.5 ||
+      event.combinedUncertaintyNs > MAX_EVENT_UNCERTAINTY_NS
+    ) {
       rejectedBeatCount += 1;
       continue;
     }
@@ -177,7 +240,7 @@ export function buildEventLockedCoherentAverage(input: {
       rejectedBeatCount += 1;
       continue;
     }
-    segments.push(segment);
+    segments.push(removeLinearDrift(segment));
     acceptedUncertainties.push(event.combinedUncertaintyNs);
   }
 
@@ -189,23 +252,39 @@ export function buildEventLockedCoherentAverage(input: {
     return result;
   }
 
-  const meanDisplacementMillimeters = sampleOffsetsMilliseconds.map((_, index) =>
-    mean(segments.map((segment) => segment[index] ?? 0)),
+  const meanDisplacementMillimeters = sampleOffsetsMilliseconds.map(
+    (_, index) => mean(segments.map((segment) => segment[index] ?? 0)),
   );
-  const standardDeviationMillimeters = sampleOffsetsMilliseconds.map((_, index) =>
-    standardDeviation(segments.map((segment) => segment[index] ?? 0)),
+  const standardDeviationMillimeters = sampleOffsetsMilliseconds.map(
+    (_, index) => standardDeviation(segments.map((segment) => segment[index] ?? 0)),
   );
   const standardErrorMillimeters = standardDeviationMillimeters.map(
     (value) => value / Math.sqrt(segments.length),
   );
   const beatCoherence = Math.max(
     0,
-    Math.min(1, mean(segments.map((segment) => Math.max(-1, correlation(segment, meanDisplacementMillimeters))))),
+    Math.min(
+      1,
+      mean(
+        segments.map((segment) =>
+          Math.max(-1, correlation(segment, meanDisplacementMillimeters)),
+        ),
+      ),
+    ),
   );
   const sources = [...new Set(mappedEvents.map(({ source }) => source))];
   const reasons: string[] = [];
-  if (clockModel.status === 'degraded') reasons.push('Klockmodellen är användbar men degraderad.');
-  if (beatCoherence < 0.5) reasons.push('De händelselåsta mekaniska vågformerna har låg inbördes likhet.');
+  if (clockModel.status === 'degraded') {
+    reasons.push('Klockmodellen är användbar men degraderad.');
+  }
+  if (targetBin === undefined) {
+    reasons.push('Hjärt-bandets range-bin saknades; huvudmålets fas användes.');
+  }
+  if (beatCoherence < 0.5) {
+    reasons.push(
+      'De händelselåsta mekaniska vågformerna har låg inbördes likhet.',
+    );
+  }
 
   return {
     version: 'scanner-event-locked-average-v1',

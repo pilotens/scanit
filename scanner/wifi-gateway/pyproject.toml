@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scanit-wifi-csi-gateway"
+version = "0.1.0"
+description = "ESP32 CSI ingress and WCS1 WebSocket gateway for ScanIt"
+requires-python = ">=3.11"
+dependencies = [
+  "websockets>=15,<17",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scanit_wifi_gateway*"]

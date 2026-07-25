@@ -15,7 +15,7 @@ export type ScannerQualityMetric = {
 };
 
 export type ScannerSignalQualityGate = {
-  version: 'scanner-quality-v1';
+  version: 'scanner-quality-v1' | 'scanner-quality-v2';
   evaluatedAt: string;
   verdict: ScannerQualityVerdict;
   score: number;
@@ -28,7 +28,7 @@ export type ScannerSignalQualityGate = {
 };
 
 export type ScannerPhysiologicalSeparation = {
-  version: 'scanner-physiology-v1';
+  version: 'scanner-physiology-v1' | 'scanner-physiology-v2';
   reliable: boolean;
   frameRateHz: number;
   durationSeconds: number;
@@ -38,9 +38,12 @@ export type ScannerPhysiologicalSeparation = {
   cardiacRangeMeters?: number;
   respiratoryRateBpm?: number;
   cardiacMechanicalRateBpm?: number;
+  cardiacAutocorrelationRateBpm?: number;
   respiratoryBandPower: number;
   cardiacBandPower: number;
   separationConfidence: number;
+  spectralAutocorrelationAgreement?: number;
+  respirationHarmonicRisk?: number;
   respirationTrace: number[];
   cardiacTrace: number[];
   qualityFlags: string[];
@@ -92,8 +95,19 @@ export type ScannerBaselineComparison = {
   warnings: string[];
 };
 
+export type ScannerTargetTrackingSummary = {
+  medianBin: number;
+  medianRangeMeters?: number;
+  confidence: number;
+  binStandardDeviation: number;
+  rangeGateMinimumMeters: number;
+  rangeGateMaximumMeters: number;
+  qualityFlags: string[];
+};
+
 export type ScannerAnalysisBundle = {
   analyses: ScannerFrameAnalysis[];
   qualityGate: ScannerSignalQualityGate;
   physiology: ScannerPhysiologicalSeparation;
+  targetTracking?: ScannerTargetTrackingSummary;
 };

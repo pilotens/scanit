@@ -1,4 +1,4 @@
-import type { RawRadioFrame } from '@/domain/radio';
+import type { RawRadioFrame, ScannerRxCalibration } from '@/domain/radio';
 
 import { fft, hannWindow, magnitude, mean, phase, type Complex } from '../math/complex';
 
@@ -15,8 +15,11 @@ export type BasicProfile = {
   targetRangeMeters?: number;
   targetPhaseRadians?: number;
   rxCoherence?: number;
+  rxCoherenceBeforeCalibration?: number;
   chirpCoherence?: number;
   referenceRxChannel?: number;
+  rxCalibrationApplied?: boolean;
+  rxCalibrationQualityScore?: number;
 };
 
 const normalize = (values: number[]) => {
@@ -108,14 +111,60 @@ const rangeFft = (raw: Complex[]) => {
   ).slice(0, raw.length / 2);
 };
 
-const computeFmcwProfile = (frame: RawRadioFrame, forcedTargetBin?: number): BasicProfile => {
+const calibrationMatches = (
+  frame: RawRadioFrame,
+  calibration: ScannerRxCalibration | undefined,
+) =>
+  Boolean(
+    calibration &&
+      calibration.antennaConfigurationId === frame.antennaConfigurationId &&
+      calibration.channels.length >= frame.channels,
+  );
+
+const applyChannelCalibration = (
+  value: Complex,
+  channel: number,
+  calibration: ScannerRxCalibration | undefined,
+): Complex => {
+  const correction = calibration?.channels[channel];
+  if (!correction?.valid) return value;
+  const cosine = Math.cos(correction.phaseCorrectionRadians);
+  const sine = Math.sin(correction.phaseCorrectionRadians);
+  return {
+    real:
+      correction.gainCorrection *
+      (value.real * cosine - value.imaginary * sine),
+    imaginary:
+      correction.gainCorrection *
+      (value.real * sine + value.imaginary * cosine),
+  };
+};
+
+const computeFmcwProfile = (
+  frame: RawRadioFrame,
+  forcedTargetBin?: number,
+  rxCalibration?: ScannerRxCalibration,
+): BasicProfile => {
   const { chirps, samplesPerChirp } = cubeDimensions(frame);
-  const chirpSpectra = Array.from({ length: frame.channels }, (_, channel) =>
+  const rawChirpSpectra = Array.from({ length: frame.channels }, (_, channel) =>
     Array.from({ length: chirps }, (_, chirp) =>
       rangeFft(extractCubeChirp(frame, channel, chirp, chirps, samplesPerChirp)),
     ),
   );
+  const calibrationApplied = calibrationMatches(frame, rxCalibration);
+  const chirpSpectra = rawChirpSpectra.map((channelSpectra, channel) =>
+    channelSpectra.map((spectrum) =>
+      calibrationApplied
+        ? spectrum.map((value) => applyChannelCalibration(value, channel, rxCalibration))
+        : spectrum,
+    ),
+  );
   const binCount = Math.floor(samplesPerChirp / 2);
+  const rawSpectra = rawChirpSpectra.map((channelSpectra) =>
+    Array.from({ length: binCount }, (_, bin) =>
+      averageComplex(channelSpectra.map((spectrum) => spectrum[bin] ?? { real: 0, imaginary: 0 })),
+    ),
+  );
   const spectra = chirpSpectra.map((channelSpectra) =>
     Array.from({ length: binCount }, (_, bin) =>
       averageComplex(channelSpectra.map((spectrum) => spectrum[bin] ?? { real: 0, imaginary: 0 })),
@@ -137,12 +186,21 @@ const computeFmcwProfile = (frame: RawRadioFrame, forcedTargetBin?: number): Bas
     ? SPEED_OF_LIGHT_METERS_PER_SECOND / (2 * frame.bandwidthHz)
     : undefined;
 
-  const rxTargetVectors = spectra.map((spectrum) => spectrum[targetBin] ?? { real: 0, imaginary: 0 });
+  const rawRxTargetVectors = rawSpectra.map(
+    (spectrum) => spectrum[targetBin] ?? { real: 0, imaginary: 0 },
+  );
+  const rxTargetVectors = spectra.map(
+    (spectrum) => spectrum[targetBin] ?? { real: 0, imaginary: 0 },
+  );
   const rxMagnitudes = rxTargetVectors.map(magnitude);
-  const referenceRxChannel = rxMagnitudes.reduce(
+  const strongestRxChannel = rxMagnitudes.reduce(
     (best, value, index) => (value > (rxMagnitudes[best] ?? -Infinity) ? index : best),
     0,
   );
+  const referenceRxChannel =
+    calibrationApplied && rxCalibration
+      ? Math.min(rxCalibration.referenceRxChannel, frame.channels - 1)
+      : strongestRxChannel;
   const referenceChirpVectors = chirpSpectra[referenceRxChannel]?.map(
     (spectrum) => spectrum[targetBin] ?? { real: 0, imaginary: 0 },
   ) ?? [];
@@ -155,9 +213,12 @@ const computeFmcwProfile = (frame: RawRadioFrame, forcedTargetBin?: number): Bas
     targetBin,
     targetRangeMeters: rangeResolution ? targetBin * rangeResolution : undefined,
     targetPhaseRadians: magnitude(referenceVector) > EPSILON ? phase(referenceVector) : undefined,
+    rxCoherenceBeforeCalibration: unitCoherence(rawRxTargetVectors),
     rxCoherence: unitCoherence(rxTargetVectors),
     chirpCoherence: unitCoherence(referenceChirpVectors),
     referenceRxChannel,
+    rxCalibrationApplied: calibrationApplied,
+    rxCalibrationQualityScore: calibrationApplied ? rxCalibration?.qualityScore : undefined,
   };
 };
 
@@ -186,7 +247,11 @@ const computeDirectProfile = (frame: RawRadioFrame, forcedTargetBin?: number): B
   };
 };
 
-export function computeBasicProfile(frame: RawRadioFrame, forcedTargetBin?: number): BasicProfile {
+export function computeBasicProfile(
+  frame: RawRadioFrame,
+  forcedTargetBin?: number,
+  rxCalibration?: ScannerRxCalibration,
+): BasicProfile {
   if (frame.samplesPerChannel <= 0 || frame.channels <= 0) {
     throw new Error('Scanner frame has invalid dimensions.');
   }
@@ -195,6 +260,6 @@ export function computeBasicProfile(frame: RawRadioFrame, forcedTargetBin?: numb
   }
 
   return frame.modality === 'mmwave-fmcw'
-    ? computeFmcwProfile(frame, forcedTargetBin)
+    ? computeFmcwProfile(frame, forcedTargetBin, rxCalibration)
     : computeDirectProfile(frame, forcedTargetBin);
 }

@@ -5,8 +5,10 @@ import type {
   ScannerReplayResult,
 } from '@/domain/scannerLab';
 
+import { interpretScannerEvidence } from '../interpretation/evidenceEngine';
 import { separateScannerPhysiology } from '../processing/physiology';
 import { ScannerSignalPipeline } from '../processing/pipeline';
+import { trackScannerTarget } from '../processing/targetTracking';
 import { evaluateScannerSignalQuality } from '../quality/signalQualityEngine';
 
 const mean = (values: number[]) =>
@@ -38,27 +40,43 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
   const pipeline = new ScannerSignalPipeline();
   const calibration = pipeline.calibrate(frames.slice(0, calibrationCount), manifest.hardwareProfileId);
   const activeFrames = frames.slice(calibrationCount);
-  const analyses = activeFrames.map((frame) => ({
+  const targetTrack = trackScannerTarget(activeFrames);
+  const analyses = activeFrames.map((frame, index) => ({
     frame,
-    analysis: pipeline.process(frame),
+    analysis: pipeline.process(frame, targetTrack.bins[index]),
   }));
   if (!analyses.length) throw new Error('Recording contains no frames after calibration.');
 
-  const qualityGate = evaluateScannerSignalQuality(
-    activeFrames,
-    analyses.map(({ analysis }) => analysis),
-  );
+  const analysisValues = analyses.map(({ analysis }) => analysis);
+  const qualityGate = evaluateScannerSignalQuality(activeFrames, analysisValues);
   const physiology = separateScannerPhysiology(activeFrames, qualityGate);
+  const interpretation = interpretScannerEvidence({
+    frames: activeFrames,
+    analyses: analysisValues,
+    qualityGate,
+    physiology,
+    targetTrack,
+  });
   const ranges = analyses.flatMap(({ analysis }) =>
     analysis.targetRangeMeters === undefined ? [] : [analysis.targetRangeMeters],
   );
   const displacements = analyses.flatMap(({ analysis }) =>
     analysis.displacementMillimeters === undefined ? [] : [Math.abs(analysis.displacementMillimeters)],
   );
+  const chirpCoherences = analyses.flatMap(({ analysis }) =>
+    analysis.chirpCoherence === undefined ? [] : [analysis.chirpCoherence],
+  );
+  const rxCoherences = analyses.flatMap(({ analysis }) =>
+    analysis.rxCoherence === undefined ? [] : [analysis.rxCoherence],
+  );
+  const targetConfidences = analyses.flatMap(({ analysis }) =>
+    analysis.targetConfidence === undefined ? [] : [analysis.targetConfidence],
+  );
   const qualityFlags = [
     ...new Set([
       ...analyses.flatMap(({ analysis }) => analysis.qualityFlags),
       ...physiology.qualityFlags,
+      ...targetTrack.qualityFlags,
     ]),
   ];
   const averageQuality = mean(analyses.map(({ analysis }) => qualityRank[analysis.signalQuality]));
@@ -66,7 +84,7 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
   return {
     recordingId: manifest.id,
     processedAt: new Date().toISOString(),
-    processingVersion: 'scanner-pipeline-v2',
+    processingVersion: 'scanner-pipeline-v3',
     manifest,
     calibration,
     samples: analyses.map(({ frame, analysis }) => ({
@@ -78,10 +96,23 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
       signalQuality: analysis.signalQuality,
       motionScore: analysis.motionScore,
       qualityFlags: analysis.qualityFlags,
+      chirpCoherence: analysis.chirpCoherence,
+      rxCoherence: analysis.rxCoherence,
+      targetConfidence: analysis.targetConfidence,
     })),
     profile: analyses.at(-1)!.analysis.normalizedProfile,
     qualityGate,
     physiology,
+    targetTracking: {
+      medianBin: targetTrack.medianBin,
+      medianRangeMeters: targetTrack.medianRangeMeters,
+      confidence: targetTrack.confidence,
+      binStandardDeviation: targetTrack.binStandardDeviation,
+      rangeGateMinimumMeters: targetTrack.rangeGate.minimumMeters,
+      rangeGateMaximumMeters: targetTrack.rangeGate.maximumMeters,
+      qualityFlags: targetTrack.qualityFlags,
+    },
+    interpretation,
     summary: {
       processedFrameCount: analyses.length,
       averageSignalToNoiseRatioDb: mean(
@@ -91,6 +122,9 @@ export function replayScannerRecording(recording: ScannerRecording): ScannerRepl
       averageTargetRangeMeters: ranges.length ? mean(ranges) : undefined,
       rangeStandardDeviationMeters: ranges.length ? standardDeviation(ranges) : undefined,
       averageMotionScore: mean(analyses.map(({ analysis }) => analysis.motionScore)),
+      averageChirpCoherence: chirpCoherences.length ? mean(chirpCoherences) : undefined,
+      averageRxCoherence: rxCoherences.length ? mean(rxCoherences) : undefined,
+      averageTargetConfidence: targetConfidences.length ? mean(targetConfidences) : undefined,
       dominantSignalQuality: rankToQuality(averageQuality),
       qualityFlags,
     },

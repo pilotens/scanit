@@ -4,6 +4,7 @@ import type {
   ScannerFrameAnalysis,
 } from '@/domain/radio';
 
+import { deriveRxCalibration } from '../calibration/rxCalibration';
 import { clamp, mean, standardDeviation, wrapPhase } from '../math/complex';
 import { computeBasicProfile } from './profile';
 
@@ -35,7 +36,10 @@ export class ScannerSignalPipeline {
 
   calibrate(frames: RawRadioFrame[], hardwareProfileId: string): ScannerCalibration {
     if (frames.length < 4) throw new Error('At least four frames are required for calibration.');
-    const profiles = frames.map((frame) => computeBasicProfile(frame));
+    const rxCalibration = deriveRxCalibration(frames, hardwareProfileId);
+    const profiles = frames.map((frame) =>
+      computeBasicProfile(frame, undefined, rxCalibration),
+    );
     const length = Math.min(...profiles.map(({ profile }) => profile.length));
     const profile = Array.from({ length }, (_, index) =>
       mean(profiles.map((item) => item.profile[index] ?? 0)),
@@ -52,13 +56,19 @@ export class ScannerSignalPipeline {
       profile,
       noiseFloor,
       hardwareProfileId,
+      rxCalibration,
     };
     this.previousPhase = undefined;
     return this.calibration;
   }
 
+  getCalibration() {
+    return this.calibration;
+  }
+
   process(frame: RawRadioFrame, targetBinOverride?: number): ScannerFrameAnalysis {
-    const basic = computeBasicProfile(frame, targetBinOverride);
+    const rxCalibration = this.calibration?.rxCalibration;
+    const basic = computeBasicProfile(frame, targetBinOverride, rxCalibration);
     const baseline = this.calibration?.profile ?? basic.profile.map(() => 0);
     const length = Math.min(basic.profile.length, baseline.length);
     const baselineDeltaProfile = Array.from({ length }, (_, index) =>
@@ -95,9 +105,12 @@ export class ScannerSignalPipeline {
       mean(baselineDeltaProfile) * 4 + Math.abs(displacementMillimeters ?? 0) / 2,
     );
     const targetConfidence = clamp(
-      Math.min(1, Math.max(0, signalToNoiseRatioDb / 20)) * 0.45 +
-        (basic.chirpCoherence ?? 0.5) * 0.35 +
-        (basic.rxCoherence ?? 0.5) * 0.2,
+      Math.min(1, Math.max(0, signalToNoiseRatioDb / 20)) * 0.4 +
+        (basic.chirpCoherence ?? 0.5) * 0.3 +
+        (basic.rxCoherence ?? 0.5) * 0.2 +
+        (basic.rxCalibrationQualityScore === undefined
+          ? 0.05
+          : basic.rxCalibrationQualityScore / 100) * 0.1,
     );
     const qualityFlags = [...frame.qualityFlags];
     if (motionPenalty > 4) qualityFlags.push('device-motion');
@@ -108,6 +121,12 @@ export class ScannerSignalPipeline {
     }
     if (basic.rxCoherence !== undefined && basic.rxCoherence < 0.2) {
       qualityFlags.push('low-rx-coherence');
+    }
+    if (frame.modality === 'mmwave-fmcw' && frame.channels > 1 && !basic.rxCalibrationApplied) {
+      qualityFlags.push('rx-calibration-missing');
+    }
+    if ((basic.rxCalibrationQualityScore ?? 100) < 60) {
+      qualityFlags.push('rx-calibration-low-quality');
     }
     if (
       frame.acquisition?.chirpsPerFrame &&
@@ -122,6 +141,12 @@ export class ScannerSignalPipeline {
       frame.antennaConfigurationId.includes('bgt60tr13c')
     ) {
       qualityFlags.push('near-field-unvalidated');
+    }
+    const timingUncertaintyMilliseconds = frame.timing
+      ? frame.timing.uncertaintyNs / 1_000_000
+      : undefined;
+    if (timingUncertaintyMilliseconds !== undefined && timingUncertaintyMilliseconds > 20) {
+      qualityFlags.push('timestamp-uncertainty-high');
     }
 
     return {
@@ -139,9 +164,13 @@ export class ScannerSignalPipeline {
       signalQuality: qualityFromSnr(signalToNoiseRatioDb, motionPenalty, coherencePenalty),
       qualityFlags: [...new Set(qualityFlags)],
       rxCoherence: basic.rxCoherence,
+      rxCoherenceBeforeCalibration: basic.rxCoherenceBeforeCalibration,
       chirpCoherence: basic.chirpCoherence,
       targetConfidence,
       targetBinTracked: targetBinOverride !== undefined,
+      rxCalibrationApplied: basic.rxCalibrationApplied,
+      rxCalibrationQualityScore: basic.rxCalibrationQualityScore,
+      timingUncertaintyMilliseconds,
     };
   }
 }

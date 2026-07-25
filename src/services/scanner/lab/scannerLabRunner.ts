@@ -29,7 +29,10 @@ export class ScannerLabRunner {
     const targetFrameRateHz = clamp(options.targetFrameRateHz, 1, 30);
     const targetFrames = Math.max(
       8,
-      Math.min(clamp(options.maxFrames, 8, 1200), Math.round(durationSeconds * targetFrameRateHz)),
+      Math.min(
+        clamp(options.maxFrames, 8, 1200),
+        Math.round(durationSeconds * targetFrameRateHz),
+      ),
     );
     const calibrationFrames = Math.max(
       4,
@@ -40,7 +43,10 @@ export class ScannerLabRunner {
     progress(onProgress, {
       phase: 'connecting',
       progress: 0.02,
-      message: runtime.mode === 'gateway' ? 'Ansluter till fysisk scanner.' : 'Startar scanneremulatorn.',
+      message:
+        runtime.mode === 'gateway'
+          ? 'Ansluter till fysisk scanner.'
+          : 'Startar scanneremulatorn.',
       framesCaptured: 0,
       targetFrames,
     });
@@ -56,7 +62,7 @@ export class ScannerLabRunner {
         progress(onProgress, {
           phase: 'configuring',
           progress: 0.06,
-          message: 'Konfigurerar FMCW-svep och hårdvarukalibrering.',
+          message: 'Konfigurerar FMCW-svep, råkub och kalibreringsfönster.',
           framesCaptured: 0,
           targetFrames,
         });
@@ -76,7 +82,7 @@ export class ScannerLabRunner {
               progress(onProgress, {
                 phase: 'capturing',
                 progress: 0.08 + (frames.length / targetFrames) * 0.72,
-                message: `Tar emot fysisk rådata (${frames.length}/${targetFrames}).`,
+                message: `Tar emot fysisk råkub (${frames.length}/${targetFrames}).`,
                 framesCaptured: frames.length,
                 targetFrames,
               });
@@ -95,31 +101,40 @@ export class ScannerLabRunner {
       hardwareProfileId = 'infineon-bgt60tr13c';
     } else {
       const sessionId = `lab-emulator-${Date.now()}-${options.position}`;
-      const startTimestampNs = BigInt(Date.now()) * 1_000_000n;
-      const frameIntervalNs = BigInt(Math.round(1_000_000_000 / targetFrameRateHz));
+      const clockDomain = `synthetic-lab-${sessionId}`;
+      const startMonotonicNs = 2_000_000_000_000_000n;
+      const startWallClockNs = BigInt(Date.now()) * 1_000_000n;
+      const frameIntervalNs = BigInt(
+        Math.round(1_000_000_000 / targetFrameRateHz),
+      );
       frames = [];
       for (let sequence = 0; sequence < targetFrames; sequence += 1) {
-        const frame = generateSyntheticRadioFrame({
-          sessionId,
-          sequence,
-          position: options.position,
-          elapsedSeconds: sequence / targetFrameRateHz,
-          motionScale: sequence < calibrationFrames ? 0 : 1,
-        });
-        frame.timestampNs = String(startTimestampNs + BigInt(sequence) * frameIntervalNs);
-        frames.push(frame);
+        const offsetNs = BigInt(sequence) * frameIntervalNs;
+        frames.push(
+          generateSyntheticRadioFrame({
+            sessionId,
+            sequence,
+            position: options.position,
+            elapsedSeconds: sequence / targetFrameRateHz,
+            motionScale: sequence < calibrationFrames ? 0 : 1,
+            clockDomain,
+            monotonicTimestampNs: String(startMonotonicNs + offsetNs),
+            wallClockUnixNs: String(startWallClockNs + offsetNs),
+            timingUncertaintyNs: 100_000,
+          }),
+        );
         if (sequence % 12 === 0 || sequence === targetFrames - 1) {
           progress(onProgress, {
             phase: 'capturing',
             progress: 0.08 + ((sequence + 1) / targetFrames) * 0.72,
-            message: `Genererar reproducerbara testframes (${sequence + 1}/${targetFrames}).`,
+            message: `Genererar kalibrerad råkub (${sequence + 1}/${targetFrames}).`,
             framesCaptured: sequence + 1,
             targetFrames,
           });
           await Promise.resolve();
         }
       }
-      sourceDescriptor = 'deterministic-body-emulator-v1';
+      sourceDescriptor = 'deterministic-body-emulator-v3';
       hardwareProfileId = 'infineon-bgt60tr13c-emulator';
     }
 
@@ -130,7 +145,7 @@ export class ScannerLabRunner {
     progress(onProgress, {
       phase: 'saving',
       progress: 0.84,
-      message: 'Krypterar och sparar råframes i chunkar.',
+      message: 'Krypterar råkuber, timing och kalibreringsmetadata.',
       framesCaptured: frames.length,
       targetFrames,
     });
@@ -148,7 +163,7 @@ export class ScannerLabRunner {
     progress(onProgress, {
       phase: 'replaying',
       progress: 0.92,
-      message: 'Återspelar inspelningen genom scanner-pipeline v1.',
+      message: 'Återspelar genom scanner-pipeline v4.',
       framesCaptured: frames.length,
       targetFrames,
     });
@@ -158,7 +173,7 @@ export class ScannerLabRunner {
     progress(onProgress, {
       phase: 'completed',
       progress: 1,
-      message: 'Inspelning och verifierad replay är klara.',
+      message: 'Inspelning, kalibrering och verifierad replay är klara.',
       framesCaptured: frames.length,
       targetFrames,
     });

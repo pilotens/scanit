@@ -162,7 +162,7 @@ class FakeWifiCsiSource(WifiCsiSource):
             self.connect()
         sequence = self._sequence
         self._sequence += 1
-        time.sleep(min(1 / self._config.frame_rate_hz, 0.01))
+        time.sleep(1 / self._config.frame_rate_hz)
         elapsed = sequence / self._config.frame_rate_hz
         respiration = math.sin(2 * math.pi * 0.24 * elapsed)
         mechanical = math.sin(2 * math.pi * 1.18 * elapsed)

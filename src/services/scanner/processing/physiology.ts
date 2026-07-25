@@ -24,6 +24,11 @@ type BandResult = {
   trace: number[];
 };
 
+type AutocorrelationResult = {
+  dominantFrequencyHz?: number;
+  confidence: number;
+};
+
 const sumComplex = (values: Complex[]) =>
   values.reduce(
     (sum, value) => ({
@@ -47,7 +52,10 @@ const directBin = (frame: RawRadioFrame, bin: number): Complex => {
 
 const binComplex = (frame: RawRadioFrame, profile: BasicProfile, bin: number): Complex => {
   if (profile.spectra) {
-    return sumComplex(profile.spectra.map((spectrum) => spectrum[bin] ?? { real: 0, imaginary: 0 }));
+    const strongest = profile.spectra
+      .map((spectrum) => spectrum[bin] ?? { real: 0, imaginary: 0 })
+      .sort((left, right) => Math.hypot(right.real, right.imaginary) - Math.hypot(left.real, left.imaginary));
+    return strongest[0] ?? { real: 0, imaginary: 0 };
   }
   return directBin(frame, bin);
 };
@@ -130,6 +138,59 @@ const bandResult = (
   };
 };
 
+const autocorrelationRate = (
+  values: number[],
+  frameRateHz: number,
+  minimumHz: number,
+  maximumHz: number,
+): AutocorrelationResult => {
+  if (values.length < 8 || frameRateHz <= 0) return { confidence: 0 };
+  const centered = detrend(values).map((value) => value - mean(values));
+  const minimumLag = Math.max(1, Math.floor(frameRateHz / maximumHz));
+  const maximumLag = Math.min(values.length - 2, Math.ceil(frameRateHz / minimumHz));
+  let bestLag: number | undefined;
+  let bestCorrelation = -1;
+  for (let lag = minimumLag; lag <= maximumLag; lag += 1) {
+    let numerator = 0;
+    let leftEnergy = 0;
+    let rightEnergy = 0;
+    for (let index = 0; index + lag < centered.length; index += 1) {
+      const left = centered[index] ?? 0;
+      const right = centered[index + lag] ?? 0;
+      numerator += left * right;
+      leftEnergy += left ** 2;
+      rightEnergy += right ** 2;
+    }
+    const denominator = Math.sqrt(leftEnergy * rightEnergy);
+    const correlation = denominator > EPSILON ? numerator / denominator : 0;
+    if (correlation > bestCorrelation) {
+      bestCorrelation = correlation;
+      bestLag = lag;
+    }
+  }
+  return {
+    dominantFrequencyHz: bestLag ? frameRateHz / bestLag : undefined,
+    confidence: Math.max(0, Math.min(1, bestCorrelation)),
+  };
+};
+
+const respirationHarmonicRisk = (
+  cardiacFrequencyHz: number | undefined,
+  respirationFrequencyHz: number | undefined,
+  resolutionHz: number,
+) => {
+  if (!cardiacFrequencyHz || !respirationFrequencyHz) return 0;
+  let risk = 0;
+  const width = Math.max(0.06, resolutionHz * 1.25);
+  for (let harmonic = 2; harmonic <= 10; harmonic += 1) {
+    const candidate = respirationFrequencyHz * harmonic;
+    if (candidate > 3.2) break;
+    const distance = Math.abs(cardiacFrequencyHz - candidate);
+    risk = Math.max(risk, Math.exp(-0.5 * (distance / width) ** 2));
+  }
+  return Math.max(0, Math.min(1, risk));
+};
+
 const normalizeTrace = (values: number[], maximumPoints = 80) => {
   if (!values.length) return [];
   const stride = Math.max(1, Math.ceil(values.length / maximumPoints));
@@ -168,7 +229,7 @@ const candidateBins = (profiles: BasicProfile[]) => {
   return Array.from({ length: Math.max(0, maximumBin) }, (_, index) => index + 1)
     .map((bin) => ({ bin, strength: mean(profiles.map(({ profile }) => profile[bin] ?? 0)) }))
     .sort((left, right) => right.strength - left.strength)
-    .slice(0, 12)
+    .slice(0, 16)
     .map(({ bin }) => bin);
 };
 
@@ -181,7 +242,7 @@ export function separateScannerPhysiology(
   const durationSeconds = qualityGate.durationSeconds;
   if (frames.length < 16 || frameRateHz <= 0) {
     return {
-      version: 'scanner-physiology-v1',
+      version: 'scanner-physiology-v2',
       reliable: false,
       frameRateHz,
       durationSeconds,
@@ -194,7 +255,7 @@ export function separateScannerPhysiology(
     };
   }
 
-  const profiles = frames.map(computeBasicProfile);
+  const profiles = frames.map((frame) => computeBasicProfile(frame));
   const bins = candidateBins(profiles);
   const candidates = bins.map((bin) => {
     const trace = buildDisplacementTrace(frames, profiles, bin);
@@ -206,43 +267,71 @@ export function separateScannerPhysiology(
       .reduce((sum, point) => sum + point.power, 0);
     const respirationScore =
       (respiration.power / Math.max(totalPower, EPSILON)) * respiration.peakConcentration;
-    const cardiacScore =
-      (cardiac.power / Math.max(totalPower, EPSILON)) *
-      cardiac.peakConcentration *
-      (cardiac.power / Math.max(cardiac.power + respiration.power, EPSILON));
-    return { bin, trace, respiration, cardiac, respirationScore, cardiacScore };
+    return { bin, trace, respiration, cardiac, totalPower, respirationScore };
   });
 
   const respiratoryCandidate = candidates.reduce<(typeof candidates)[number] | undefined>(
     (best, candidate) => (!best || candidate.respirationScore > best.respirationScore ? candidate : best),
     undefined,
   );
-  const cardiacCandidate = candidates.reduce<(typeof candidates)[number] | undefined>(
+  const respirationFrequency = respiratoryCandidate?.respiration.dominantFrequencyHz;
+  const frequencyResolution = frameRateHz / Math.max(frames.length, 1);
+
+  const cardiacCandidates = candidates.map((candidate) => {
+    const spectralFrequency = candidate.cardiac.dominantFrequencyHz;
+    const autocorrelation = autocorrelationRate(candidate.trace, frameRateHz, 0.7, 3.0);
+    const agreement =
+      spectralFrequency && autocorrelation.dominantFrequencyHz
+        ? Math.exp(-Math.abs(spectralFrequency - autocorrelation.dominantFrequencyHz) / 0.18) *
+          autocorrelation.confidence
+        : 0;
+    const harmonicRisk = respirationHarmonicRisk(
+      spectralFrequency,
+      respirationFrequency,
+      frequencyResolution,
+    );
+    const baseScore =
+      (candidate.cardiac.power / Math.max(candidate.totalPower, EPSILON)) *
+      candidate.cardiac.peakConcentration *
+      (candidate.cardiac.power /
+        Math.max(candidate.cardiac.power + candidate.respiration.power, EPSILON));
+    const cardiacScore = baseScore * (0.35 + 0.65 * agreement) * (1 - harmonicRisk * 0.85);
+    return { ...candidate, autocorrelation, agreement, harmonicRisk, cardiacScore };
+  });
+  const cardiacCandidate = cardiacCandidates.reduce<(typeof cardiacCandidates)[number] | undefined>(
     (best, candidate) => (!best || candidate.cardiacScore > best.cardiacScore ? candidate : best),
     undefined,
   );
 
   if (durationSeconds < 8) flags.push('respiration-duration-short');
-  if (durationSeconds < 5) flags.push('cardiac-duration-short');
+  if (durationSeconds < 8) flags.push('cardiac-duration-short');
   if (qualityGate.verdict !== 'approved') flags.push('signal-quality-not-approved');
-  if (!respiratoryCandidate?.respiration.dominantFrequencyHz) flags.push('respiration-band-not-resolved');
+  if (!respirationFrequency) flags.push('respiration-band-not-resolved');
   if (!cardiacCandidate?.cardiac.dominantFrequencyHz) flags.push('cardiac-band-not-resolved');
+  if ((cardiacCandidate?.harmonicRisk ?? 0) > 0.6) flags.push('cardiac-peak-may-be-respiration-harmonic');
+  if ((cardiacCandidate?.agreement ?? 0) < 0.35) flags.push('cardiac-methods-disagree');
 
   const respirationScore = respiratoryCandidate?.respirationScore ?? 0;
   const cardiacScore = cardiacCandidate?.cardiacScore ?? 0;
   const spectralConfidence = Math.sqrt(Math.max(0, respirationScore) * Math.max(0, cardiacScore));
   const stabilityPenalty = Math.min(
     1,
-    standardDeviation(cardiacCandidate?.trace ?? []) / Math.max(0.05, Math.abs(mean(cardiacCandidate?.trace ?? [])) + 1),
+    standardDeviation(cardiacCandidate?.trace ?? []) /
+      Math.max(0.05, Math.abs(mean(cardiacCandidate?.trace ?? [])) + 1),
   );
   const separationConfidence = Math.max(
     0,
-    Math.min(1, spectralConfidence * 4 * (qualityGate.score / 100) * (1 - stabilityPenalty * 0.15)),
+    Math.min(
+      1,
+      spectralConfidence * 5 * (qualityGate.score / 100) * (1 - stabilityPenalty * 0.15),
+    ),
   );
   const reliable =
     qualityGate.verdict === 'approved' &&
-    durationSeconds >= 5 &&
-    separationConfidence >= 0.2 &&
+    durationSeconds >= 8 &&
+    separationConfidence >= 0.22 &&
+    (cardiacCandidate?.agreement ?? 0) >= 0.35 &&
+    (cardiacCandidate?.harmonicRisk ?? 1) < 0.75 &&
     Boolean(cardiacCandidate?.cardiac.dominantFrequencyHz);
 
   const rangeResolution = frames[0]!.bandwidthHz > 0
@@ -250,7 +339,7 @@ export function separateScannerPhysiology(
     : undefined;
 
   return {
-    version: 'scanner-physiology-v1',
+    version: 'scanner-physiology-v2',
     reliable,
     frameRateHz,
     durationSeconds,
@@ -261,16 +350,20 @@ export function separateScannerPhysiology(
     cardiacRangeMeters:
       cardiacCandidate && rangeResolution ? cardiacCandidate.bin * rangeResolution : undefined,
     respiratoryRateBpm:
-      durationSeconds >= 8 && respiratoryCandidate?.respiration.dominantFrequencyHz
-        ? respiratoryCandidate.respiration.dominantFrequencyHz * 60
-        : undefined,
+      durationSeconds >= 8 && respirationFrequency ? respirationFrequency * 60 : undefined,
     cardiacMechanicalRateBpm:
-      durationSeconds >= 5 && cardiacCandidate?.cardiac.dominantFrequencyHz
+      durationSeconds >= 8 && cardiacCandidate?.cardiac.dominantFrequencyHz
         ? cardiacCandidate.cardiac.dominantFrequencyHz * 60
+        : undefined,
+    cardiacAutocorrelationRateBpm:
+      durationSeconds >= 8 && cardiacCandidate?.autocorrelation.dominantFrequencyHz
+        ? cardiacCandidate.autocorrelation.dominantFrequencyHz * 60
         : undefined,
     respiratoryBandPower: respiratoryCandidate?.respiration.power ?? 0,
     cardiacBandPower: cardiacCandidate?.cardiac.power ?? 0,
     separationConfidence,
+    spectralAutocorrelationAgreement: cardiacCandidate?.agreement,
+    respirationHarmonicRisk: cardiacCandidate?.harmonicRisk,
     respirationTrace: normalizeTrace(respiratoryCandidate?.respiration.trace ?? []),
     cardiacTrace: normalizeTrace(cardiacCandidate?.cardiac.trace ?? []),
     qualityFlags: [...new Set(flags)],

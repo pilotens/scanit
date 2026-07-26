@@ -1,49 +1,76 @@
-# ESP32 Wi-Fi CSI receiver node
+# ESP32-C5 Wi-Fi CSI receiver node
 
-Reference ESP-IDF firmware for a ScanIt Wi-Fi CSI receiver node.
+Reference ESP-IDF firmware for a ScanIt physical Wi-Fi CSI receiver.
+
+## Locked development target
+
+- ESP32-C5
+- ESP-IDF 5.5.4
+- 5 GHz channel 36
+- HT20
+- controlled SND1 transmitter
+- dedicated binary CSI0 UART at 2,000,000 baud by default
 
 ## Current scope
 
-- enables CSI capture on supported ESP32-C5/C6-class targets;
-- copies bounded CSI data from the Wi-Fi driver callback into a FreeRTOS queue;
-- records node-local monotonic time, channel, antenna, MCS, RSSI and noise floor;
-- emits packed `CSI0` header + raw int8 CSI bytes on the selected serial transport;
-- leaves PHY/LTF-specific subcarrier interpretation to the gateway;
-- never serializes or blocks inside the Wi-Fi callback.
+The firmware:
 
-`CSI0` is MCU-to-gateway ingress. It is not the application record format. The gateway validates and converts it to WCS1.
+- captures CSI from controlled sounding frames;
+- parses and CRC-verifies the transmitter's `SND1` payload in the promiscuous callback;
+- matches SND1 to the CSI callback using transmitter MAC and the Wi-Fi driver's microsecond RX timestamp;
+- copies bounded raw CSI into a FreeRTOS queue without blocking the Wi-Fi task;
+- emits `CSI0 v2` with sounding ID, session nonce, receiver and transmitter timestamps, match delta, queue-drop counter and raw int8 CSI bytes;
+- keeps PHY/LTF-specific subcarrier interpretation in the gateway;
+- sends binary data on a dedicated UART so normal log output cannot corrupt CSI0 framing.
+
+`CSI0` is MCU-to-gateway ingress. The gateway validates it and converts it to WCS1 for encrypted record/replay and analysis.
 
 ## Build
 
 ```bash
+. $IDF_PATH/export.sh
 cd scanner/firmware/esp32-wifi-csi
-idf.py set-target esp32c6
+idf.py set-target esp32c5
 idf.py build
-idf.py flash monitor
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-The target and CSI configuration must be checked against the installed ESP-IDF version. The reference uses conditional configuration for newer HE-capable targets and the legacy CSI configuration for older targets.
+The same projects are built in GitHub Actions with the official ESP-IDF 5.5.4 container.
+
+## Binary UART
+
+Defaults:
+
+- UART port: 1
+- TX GPIO: 5
+- RX GPIO: 4
+- baud rate: 2,000,000
+
+Connect each receiver's CSI0 TX to a separate UART/USB adapter on the gateway computer. Keep the normal USB/JTAG console available for logs and flashing.
 
 ## Physical rig
 
-Use at least:
+Use:
 
-- one controlled transmitter;
-- two receiver nodes for CSI-ratio sensing;
-- three receivers for the current reference setup;
-- fixed node and body geometry;
-- one gateway computer connected to all receiver serial ports;
-- synchronized ECG/PPG and respiratory reference signals for validation.
+- one ESP32-C5 controlled sounding transmitter;
+- at least two ESP32-C5 CSI receivers;
+- three receivers for the current CSI-ratio setup;
+- the same 5 GHz channel and HT20 configuration on all nodes;
+- fixed transmitter, receiver and body geometry;
+- one gateway computer connected to all binary UARTs;
+- raw ECG/PPG and a respiratory belt for validation.
 
-## Remaining hardware work
+The gateway pairs receivers by `(SND1 session nonce, sounding ID)`. Receiver-local packet order is never considered sufficient for physical multi-node capture.
 
-- replace stdout reference writes with the selected USB/JTAG serial or dedicated UART transport;
-- add an explicit sounding identifier derived from the controlled transmitter rather than relying on receiver-local packet order;
-- measure dropped callback records and queue overflow;
-- validate exact CSI byte ordering and subcarrier map for every PHY/LTF mode;
-- add a common trigger or independently validated clock synchronization;
-- compile and flash on the selected ESP32 target;
-- measure sustained throughput and temperature drift.
+## Measurements to perform after flashing
+
+- confirm that every SND1 frame causes both promiscuous and CSI callbacks;
+- characterize the SND1-to-CSI timestamp delta distribution;
+- verify the CSI int8 order and the exact PHY/LTF subcarrier map;
+- measure queue drops, UART write failures and serial throughput;
+- test receiver-start offsets and packet loss;
+- measure thermal drift and repeatability in a fixed phantom/fixture;
+- compare Wi-Fi periodicity with synchronized ECG/PPG and respiratory references.
 
 ## Safety boundary
 

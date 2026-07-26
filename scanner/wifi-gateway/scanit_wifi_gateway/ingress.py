@@ -16,6 +16,7 @@ CSI_STATUS_SOUNDING_CRC_VALID = 1 << 1
 CSI_STATUS_TIMESTAMP_MATCHED = 1 << 2
 CSI_STATUS_PAYLOAD_TRUNCATED = 1 << 3
 CSI_STATUS_QUEUE_DROPS_PRESENT = 1 << 4
+CSI_STATUS_ANTENNA_INDEX_UNKNOWN = 1 << 5
 
 
 class CsiIngressError(ValueError):
@@ -230,6 +231,8 @@ def record_to_wcs1_frame(record: Csi0Record, mapping: WifiFrameMapping) -> dict[
         quality_flags.append("csi-payload-truncated")
     if record.status_flags & CSI_STATUS_QUEUE_DROPS_PRESENT or record.dropped_total > 0:
         quality_flags.append("receiver-queue-drops")
+    if record.status_flags & CSI_STATUS_ANTENNA_INDEX_UNKNOWN:
+        quality_flags.append("receiver-antenna-index-unknown")
     if record.version == CSI0_VERSION_V1:
         quality_flags.append("legacy-csi0-v1")
 

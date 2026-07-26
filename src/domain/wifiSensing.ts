@@ -2,6 +2,10 @@ import type { ScannerClockDescriptor } from './scannerTiming';
 
 export type WifiSensingBand = '2.4-ghz' | '5-ghz' | '6-ghz';
 export type WifiSensingPhy = 'legacy-ofdm' | 'ht' | 'vht' | 'he' | 'eht' | 'unknown';
+export type WifiSoundingIdSource =
+  | 'transmitter-payload'
+  | 'gateway-software-aligned'
+  | 'receiver-sequence-fallback';
 
 export type WifiCsiFrame = {
   schemaVersion: 1;
@@ -10,6 +14,15 @@ export type WifiCsiFrame = {
   sequence: number;
   /** Same sounding packet across multiple receivers/antennas. */
   soundingSequence: number;
+  soundingIdSource?: WifiSoundingIdSource;
+  soundingSessionNonce?: number;
+  transmitterTimestampNs?: string;
+  transmitterClockDomain?: string;
+  receiverDriverTimestampUs?: number;
+  soundingMarkerDeltaMicroseconds?: number;
+  receiverDroppedRecordCount?: number;
+  csi0Version?: number;
+  csi0StatusFlags?: number;
   timestampNs: string;
   timing?: ScannerClockDescriptor;
   txNodeId: string;

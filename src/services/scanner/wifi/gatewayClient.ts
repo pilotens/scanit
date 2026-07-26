@@ -39,13 +39,26 @@ export type WifiGatewayConfiguration = {
   spatialStream?: number;
   txAntenna?: number;
   frameRateHz?: number;
+  requireExplicitSoundingId?: boolean;
   subcarrierIndices?: number[];
+};
+
+export type WifiGatewayChildStatus = {
+  source?: string;
+  firmwareVersion?: string;
+  deviceConnected?: boolean;
+  supportsExplicitSoundingId?: boolean;
+  csi0RecordsDecoded?: number;
+  csi0V1RecordsDecoded?: number;
+  csi0V2RecordsDecoded?: number;
+  receiverDroppedRecordCount?: number;
 };
 
 export type WifiGatewayStatus = {
   source: string;
   deviceConnected: boolean;
   supportsRawCsi: boolean;
+  supportsExplicitSoundingId?: boolean;
   supportsSharedClock?: boolean;
   softwareAlignedClock?: boolean;
   clockDomain?: string;
@@ -53,11 +66,13 @@ export type WifiGatewayStatus = {
   receiverCount: number;
   streaming: boolean;
   streamSessionId?: string | null;
-  childSources?: Array<{
-    source?: string;
-    firmwareVersion?: string;
-    deviceConnected?: boolean;
-  }>;
+  explicitSoundingBatches?: number;
+  fallbackSoundingBatches?: number;
+  duplicateReceiverFrames?: number;
+  discardedUnpairedFrames?: number;
+  transmitterSoundingGaps?: number;
+  activeSoundingSessionNonce?: number | null;
+  childSources?: WifiGatewayChildStatus[];
   config?: WifiGatewayConfiguration & { rxNodeId?: string };
   gateway?: {
     host: string;

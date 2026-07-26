@@ -23,11 +23,17 @@ const configuration: WifiSensingConfiguration = {
   receiverNodeIds: ['rx-left', 'rx-right', 'rx-reference'],
 };
 
+type FrameMutator = (frames: WifiCsiFrame[]) => WifiCsiFrame[];
+
 class FakeGatewayClient implements WifiGatewayClientLike {
   private frames: WifiCsiFrame[] = [];
   private sessionId = 'unstarted';
+  lastConfiguration?: WifiGatewayConfiguration;
 
-  constructor(private readonly receiverNodeIds = configuration.receiverNodeIds) {}
+  constructor(
+    private readonly receiverNodeIds = configuration.receiverNodeIds,
+    private readonly mutateFrames: FrameMutator = (frames) => frames,
+  ) {}
 
   async connect(): Promise<WifiGatewayStatus> {
     return this.gatewayStatus();
@@ -37,19 +43,21 @@ class FakeGatewayClient implements WifiGatewayClientLike {
     return this.gatewayStatus();
   }
 
-  async configure(_configuration: WifiGatewayConfiguration): Promise<WifiGatewayStatus> {
+  async configure(configurationInput: WifiGatewayConfiguration): Promise<WifiGatewayStatus> {
+    this.lastConfiguration = configurationInput;
     return this.gatewayStatus();
   }
 
   async startStream(sessionId: string): Promise<WifiGatewayStatus> {
     this.sessionId = sessionId;
-    this.frames = simulateWifiCsiCapture({
+    const generated = simulateWifiCsiCapture({
       id: sessionId,
       soundingCount: configuration.soundingCount,
       calibrationSoundingCount: configuration.calibrationSoundingCount,
       soundingRateHz: configuration.soundingRateHz,
       receiverNodeIds: this.receiverNodeIds,
     }).frames.map((frame) => ({ ...frame, sessionId }));
+    this.frames = this.mutateFrames(generated);
     return { ...this.gatewayStatus(), streaming: true, streamSessionId: sessionId };
   }
 
@@ -72,15 +80,22 @@ class FakeGatewayClient implements WifiGatewayClientLike {
       source: 'test-wifi-gateway',
       deviceConnected: true,
       supportsRawCsi: true,
-      supportsSharedClock: true,
+      supportsExplicitSoundingId: true,
+      supportsSharedClock: false,
+      softwareAlignedClock: true,
       receiverNodeIds: [...this.receiverNodeIds],
       receiverCount: this.receiverNodeIds.length,
       streaming: false,
       streamSessionId: null,
+      explicitSoundingBatches: 0,
+      fallbackSoundingBatches: 0,
       childSources: this.receiverNodeIds.map((receiverNodeId) => ({
         source: receiverNodeId,
-        firmwareVersion: 'test-firmware-v1',
+        firmwareVersion: 'test-firmware-v2',
         deviceConnected: true,
+        supportsExplicitSoundingId: true,
+        csi0V2RecordsDecoded: 100,
+        receiverDroppedRecordCount: 0,
       })),
       gateway: {
         host: '127.0.0.1',
@@ -93,7 +108,7 @@ class FakeGatewayClient implements WifiGatewayClientLike {
 }
 
 describe('physical Wi-Fi CSI gateway provider', () => {
-  it('assembles complete multi-link soundings into one immutable capture', async () => {
+  it('assembles transmitter-identified multi-link soundings into one immutable capture', async () => {
     const client = new FakeGatewayClient();
     const factory: WifiGatewayClientFactory = () => client;
     const provider = new GatewayWifiSensingProvider('ws://127.0.0.1:8770', factory);
@@ -101,6 +116,7 @@ describe('physical Wi-Fi CSI gateway provider', () => {
     const status = await provider.connect();
     expect(status.nodeCount).toBe(4);
     await provider.configure(configuration);
+    expect(client.lastConfiguration?.requireExplicitSoundingId).toBe(true);
     const capture = await provider.capture({ id: 'physical-provider-test' });
     await provider.disconnect();
 
@@ -113,7 +129,15 @@ describe('physical Wi-Fi CSI gateway provider', () => {
       configuration.soundingCount,
     );
     expect(new Set(capture.frames.map(({ rxNodeId }) => rxNodeId)).size).toBe(3);
+    expect(new Set(capture.frames.map(({ soundingSessionNonce }) => soundingSessionNonce))).toEqual(
+      new Set([0x5343414e]),
+    );
+    expect(capture.frames.every(({ soundingIdSource }) => soundingIdSource === 'transmitter-payload')).toBe(
+      true,
+    );
     expect(capture.tags).toContain('physical-gateway');
+    expect(capture.tags).toContain('explicit-sounding-id');
+    expect(capture.notes.join(' ')).toContain('SND1 nonce');
   });
 
   it('rejects gateways that expose only one receiver link', async () => {
@@ -125,6 +149,42 @@ describe('physical Wi-Fi CSI gateway provider', () => {
 
     await provider.connect();
     await expect(provider.configure(configuration)).rejects.toThrow(/at least two receiver/i);
+    await provider.disconnect();
+  });
+
+  it('rejects physical frames without transmitter sounding identity', async () => {
+    const client = new FakeGatewayClient(configuration.receiverNodeIds, (frames) =>
+      frames.map((frame) => ({
+        ...frame,
+        soundingIdSource: 'receiver-sequence-fallback',
+        soundingSessionNonce: undefined,
+      })),
+    );
+    const provider = new GatewayWifiSensingProvider('ws://127.0.0.1:8770', () => client);
+
+    await provider.connect();
+    await provider.configure(configuration);
+    await expect(provider.capture({ id: 'missing-snd1' })).rejects.toThrow(/validated transmitter sounding ID/i);
+    await provider.disconnect();
+  });
+
+  it('rejects receiver queue drops', async () => {
+    const client = new FakeGatewayClient(configuration.receiverNodeIds, (frames) =>
+      frames.map((frame, index) =>
+        index === 0
+          ? {
+              ...frame,
+              receiverDroppedRecordCount: 1,
+              qualityFlags: [...frame.qualityFlags, 'receiver-queue-drops'],
+            }
+          : frame,
+      ),
+    );
+    const provider = new GatewayWifiSensingProvider('ws://127.0.0.1:8770', () => client);
+
+    await provider.connect();
+    await provider.configure(configuration);
+    await expect(provider.capture({ id: 'drop-test' })).rejects.toThrow(/dropped CSI0 records/i);
     await provider.disconnect();
   });
 });

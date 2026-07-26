@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +73,7 @@ typedef struct __attribute__((packed)) {
     uint16_t header_bytes;
     uint32_t sequence;
     uint32_t sounding_id;
+    uint32_t sounding_session_nonce;
     int64_t monotonic_timestamp_us;
     int64_t tx_monotonic_us;
     uint32_t rx_driver_timestamp_us;
@@ -206,11 +208,7 @@ static void promiscuous_rx_callback(void *buffer, wifi_promiscuous_pkt_type_t ty
         return;
     }
 
-    store_sounding_marker(
-        frame + 10,
-        packet->rx_ctrl.timestamp,
-        &sounding
-    );
+    store_sounding_marker(frame + 10, packet->rx_ctrl.timestamp, &sounding);
 }
 
 static void csi_rx_callback(void *ctx, wifi_csi_info_t *info)
@@ -226,6 +224,7 @@ static void csi_rx_callback(void *ctx, wifi_csi_info_t *info)
     record.header.header_bytes = sizeof(csi_record_header_t);
     record.header.sequence = s_sequence++;
     record.header.sounding_id = UINT32_MAX;
+    record.header.sounding_session_nonce = 0;
     record.header.monotonic_timestamp_us = esp_timer_get_time();
     record.header.tx_monotonic_us = 0;
     record.header.rx_driver_timestamp_us = info->rx_ctrl.timestamp;
@@ -266,6 +265,7 @@ static bool attach_sounding_identity(queued_csi_record_t *record)
         return false;
     }
     record->header.sounding_id = marker.sounding_id;
+    record->header.sounding_session_nonce = marker.session_nonce;
     record->header.tx_monotonic_us = marker.tx_monotonic_us;
     record->header.marker_delta_us = delta_us;
     record->header.status_flags |=
@@ -300,8 +300,8 @@ static void write_record_to_gateway(queued_csi_record_t *record)
         (const char *)record->payload,
         record->header.payload_bytes
     );
-    if (header_written != sizeof(record->header) ||
-        payload_written != record->header.payload_bytes) {
+    if (header_written != (int)sizeof(record->header) ||
+        payload_written != (int)record->header.payload_bytes) {
         s_queue_drops++;
         return;
     }

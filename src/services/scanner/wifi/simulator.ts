@@ -116,7 +116,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
         channel: 36,
         centerFrequencyHz: 5_180_000_000,
         bandwidthHz: 20_000_000,
-        phy: 'he',
+        phy: 'ht',
         spatialStream: 0,
         subcarrierIndices: [...subcarrierIndices],
         csi,
@@ -125,7 +125,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
         packetSequence: soundingSequence,
         transmitterMac: '02:00:00:00:00:01',
         receiverMac: `02:00:00:00:01:0${linkIndex + 1}`,
-        firmwareVersion: 'wifi-csi-simulator-v2',
+        firmwareVersion: 'wifi-csi-simulator-v3',
         source: 'deterministic-wifi-csi-simulator',
         qualityFlags: [],
         isSimulated: true,
@@ -142,7 +142,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
     hardwareProfileId: 'esp32-c5-csi-array-simulator',
     frames,
     calibrationSoundingCount,
-    tags: ['wifi-csi', 'simulated', 'explicit-sounding-id'],
+    tags: ['wifi-csi', 'simulated', 'explicit-sounding-id', 'ht20-mcs0-sounding'],
     notes: [],
   };
 }

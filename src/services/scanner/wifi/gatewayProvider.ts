@@ -104,6 +104,7 @@ export class GatewayWifiSensingProvider implements WifiSensingProvider {
       channel: configuration.channel,
       centerFrequencyHz: centerFrequencyHz(configuration.band, configuration.channel),
       bandwidthHz: configuration.bandwidthHz,
+      phy: 'ht',
       frameRateHz: configuration.soundingRateHz,
       requireExplicitSoundingId: true,
     });
@@ -210,6 +211,7 @@ export class GatewayWifiSensingProvider implements WifiSensingProvider {
         'wifi-csi',
         'physical-gateway',
         'explicit-sounding-id',
+        'ht20-mcs0-sounding',
         ...(input.tags ?? []),
       ]),
       notes: [

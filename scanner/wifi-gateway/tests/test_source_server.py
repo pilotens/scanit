@@ -15,11 +15,6 @@ class MultiLinkSourceTests(unittest.TestCase):
         left = FakeWifiCsiSource()
         right = FakeWifiCsiSource()
         reference = FakeWifiCsiSource()
-        # Simulate receiver processes starting at different times. Exact matching
-        # must buffer until all three have observed the same over-the-air ID.
-        left._sequence = 0  # type: ignore[attr-defined]
-        right._sequence = 3  # type: ignore[attr-defined]
-        reference._sequence = 1  # type: ignore[attr-defined]
         source = MultiLinkWifiCsiSource(
             [
                 ("rx-left", left),
@@ -36,6 +31,12 @@ class MultiLinkSourceTests(unittest.TestCase):
                     require_explicit_sounding_id=True,
                 )
             )
+            # Configure intentionally resets a new capture session. Apply the
+            # simulated receiver start offsets afterwards so the test exercises
+            # exact SND1 intersection rather than stale session state.
+            left._sequence = 0  # type: ignore[attr-defined]
+            right._sequence = 3  # type: ignore[attr-defined]
+            reference._sequence = 1  # type: ignore[attr-defined]
             frames = [source.read_frame() for _ in range(6)]
             status = source.status()
         finally:

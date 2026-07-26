@@ -180,7 +180,7 @@ def run_pre_hardware_readiness() -> BenchReadinessReport:
         )
     )
 
-    checks.append(_expect_failure("identity-fallback", 45, "fallback sounding identities"))
+    checks.append(_expect_failure("identity-fallback", 45, "Some receiver nodes expose"))
     checks.append(_expect_failure("nonce-change", 84, "session nonce changed"))
     checks.append(_expect_failure("truncated-payload", 48, "cannot be mapped safely"))
 

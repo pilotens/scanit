@@ -24,6 +24,46 @@ const centerFrequencyHz = (band: WifiSensingConfiguration['band'], channel: numb
 
 const unique = <T,>(values: T[]) => [...new Set(values)];
 
+const validatePhysicalSoundingIdentity = (frames: WifiCsiFrame[]) => {
+  if (!frames.length) throw new Error('The Wi-Fi CSI gateway returned no frames.');
+  const explicit = frames.filter(
+    ({ soundingIdSource, soundingSessionNonce }) =>
+      soundingIdSource === 'transmitter-payload' && soundingSessionNonce !== undefined,
+  );
+  const explicitRatio = explicit.length / frames.length;
+  if (explicitRatio < 0.98) {
+    throw new Error(
+      `Only ${(explicitRatio * 100).toFixed(1)}% of physical CSI frames have a validated ` +
+        'transmitter sounding ID; at least 98% are required.',
+    );
+  }
+  const nonces = unique(explicit.map(({ soundingSessionNonce }) => soundingSessionNonce));
+  if (nonces.length !== 1) {
+    throw new Error('The physical Wi-Fi capture contains multiple sounding session nonces.');
+  }
+  if (frames.some(({ qualityFlags }) => qualityFlags.includes('receiver-queue-drops'))) {
+    throw new Error('At least one ESP32 receiver reported dropped CSI0 records.');
+  }
+  if (frames.some(({ qualityFlags }) => qualityFlags.includes('csi-payload-truncated'))) {
+    throw new Error('At least one ESP32 receiver truncated a CSI payload.');
+  }
+  const maximumMarkerDeltaUs = Math.max(
+    ...explicit.map(({ soundingMarkerDeltaMicroseconds }) =>
+      Math.abs(soundingMarkerDeltaMicroseconds ?? Number.POSITIVE_INFINITY),
+    ),
+  );
+  if (!Number.isFinite(maximumMarkerDeltaUs) || maximumMarkerDeltaUs > 2_000) {
+    throw new Error(
+      `The SND1-to-CSI callback match delta reached ${maximumMarkerDeltaUs.toFixed(0)} µs.`,
+    );
+  }
+  return {
+    explicitRatio,
+    soundingSessionNonce: nonces[0]!,
+    maximumMarkerDeltaUs,
+  };
+};
+
 export class GatewayWifiSensingProvider implements WifiSensingProvider {
   private client?: WifiGatewayClientLike;
   private gatewayStatus?: WifiGatewayStatus;
@@ -65,6 +105,7 @@ export class GatewayWifiSensingProvider implements WifiSensingProvider {
       centerFrequencyHz: centerFrequencyHz(configuration.band, configuration.channel),
       bandwidthHz: configuration.bandwidthHz,
       frameRateHz: configuration.soundingRateHz,
+      requireExplicitSoundingId: true,
     });
     this.validateGateway(status);
     if (status.receiverCount < 2) {
@@ -151,6 +192,7 @@ export class GatewayWifiSensingProvider implements WifiSensingProvider {
           left.rxNodeId.localeCompare(right.rxNodeId) ||
           left.rxAntenna - right.rxAntenna,
       );
+    const soundingIdentity = validatePhysicalSoundingIdentity(frames);
 
     return {
       schemaVersion: 1,
@@ -164,8 +206,18 @@ export class GatewayWifiSensingProvider implements WifiSensingProvider {
         configuration.calibrationSoundingCount,
         Math.max(1, completeSoundings.length - 20),
       ),
-      tags: unique(['wifi-csi', 'physical-gateway', ...(input.tags ?? [])]),
-      notes: input.notes ?? [],
+      tags: unique([
+        'wifi-csi',
+        'physical-gateway',
+        'explicit-sounding-id',
+        ...(input.tags ?? []),
+      ]),
+      notes: [
+        ...(input.notes ?? []),
+        `SND1 nonce ${soundingIdentity.soundingSessionNonce}; ` +
+          `${(soundingIdentity.explicitRatio * 100).toFixed(1)}% explicit ID; ` +
+          `max callback delta ${soundingIdentity.maximumMarkerDeltaUs.toFixed(0)} µs.`,
+      ],
     };
   }
 

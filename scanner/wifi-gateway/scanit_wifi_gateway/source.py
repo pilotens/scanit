@@ -23,6 +23,7 @@ class WifiGatewayConfig:
     spatial_stream: int = 0
     tx_antenna: int = 0
     frame_rate_hz: float = 20.0
+    require_explicit_sounding_id: bool = True
     subcarrier_indices: tuple[int, ...] = tuple(
         list(range(-28, 0)) + list(range(1, 29))
     )
@@ -38,6 +39,7 @@ class WifiGatewayConfig:
             "spatialStream": "spatial_stream",
             "txAntenna": "tx_antenna",
             "frameRateHz": "frame_rate_hz",
+            "requireExplicitSoundingId": "require_explicit_sounding_id",
             "subcarrierIndices": "subcarrier_indices",
         }
         changes: dict[str, Any] = {}
@@ -45,6 +47,8 @@ class WifiGatewayConfig:
             normalized = aliases.get(key, key)
             if normalized == "subcarrier_indices":
                 changes[normalized] = tuple(int(item) for item in value)
+            elif normalized == "require_explicit_sounding_id":
+                changes[normalized] = bool(value)
             elif normalized in self.__dataclass_fields__:
                 changes[normalized] = value
         updated = replace(self, **changes)
@@ -99,6 +103,7 @@ class WifiGatewayConfig:
             "spatialStream": self.spatial_stream,
             "txAntenna": self.tx_antenna,
             "frameRateHz": self.frame_rate_hz,
+            "requireExplicitSoundingId": self.require_explicit_sounding_id,
             "subcarrierIndices": list(self.subcarrier_indices),
         }
 
@@ -135,6 +140,7 @@ class FakeWifiCsiSource(WifiCsiSource):
         self._config = WifiGatewayConfig()
         self._sequence = 0
         self._started_ns = 2_100_000_000_000_000_000
+        self._session_nonce = 0x5343414E
 
     def connect(self) -> dict[str, Any]:
         self._connected = True
@@ -207,6 +213,15 @@ class FakeWifiCsiSource(WifiCsiSource):
             "sessionId": self._config.session_id,
             "sequence": sequence,
             "soundingSequence": sequence,
+            "soundingIdSource": "transmitter-payload",
+            "soundingSessionNonce": self._session_nonce,
+            "transmitterTimestampNs": str(timestamp_ns),
+            "transmitterClockDomain": f"{self._config.tx_node_id}:fake-monotonic",
+            "receiverDriverTimestampUs": int(timestamp_ns // 1_000) & 0xFFFFFFFF,
+            "soundingMarkerDeltaMicroseconds": 0,
+            "receiverDroppedRecordCount": 0,
+            "csi0Version": 2,
+            "csi0StatusFlags": 0x07,
             "timestampNs": str(timestamp_ns),
             "timing": {
                 "clockDomain": self._config.clock_domain,
@@ -229,7 +244,7 @@ class FakeWifiCsiSource(WifiCsiSource):
             "rssiDbm": -43 + int((receiver_magnitude - 0.9) * 8),
             "noiseFloorDbm": -94,
             "packetSequence": sequence,
-            "firmwareVersion": "fake-wifi-csi-v2",
+            "firmwareVersion": "fake-wifi-csi-v3",
             "source": self.source_name,
             "qualityFlags": [],
             "isSimulated": True,
@@ -238,9 +253,10 @@ class FakeWifiCsiSource(WifiCsiSource):
     def status(self) -> dict[str, Any]:
         return {
             "source": self.source_name,
-            "firmwareVersion": "fake-wifi-csi-v2",
+            "firmwareVersion": "fake-wifi-csi-v3",
             "deviceConnected": self._connected,
             "supportsRawCsi": True,
+            "supportsExplicitSoundingId": True,
             "explicitSubcarrierMap": True,
             "config": self._config.public_dict(),
         }
@@ -259,6 +275,7 @@ class SerialWifiCsiSource(WifiCsiSource):
         self._parser = Csi0StreamParser()
         self._pending: list[dict[str, Any]] = []
         self._config = WifiGatewayConfig(rx_node_id=port.replace("/", "-"))
+        self._last_dropped_total = 0
 
     def connect(self) -> dict[str, Any]:
         if self._serial is None:
@@ -282,22 +299,31 @@ class SerialWifiCsiSource(WifiCsiSource):
                     "Timed out waiting for CSI0 data from the ESP32 node."
                 )
             records = self._parser.feed(chunk)
-            self._pending.extend(
-                record_to_wcs1_frame(record, self._config.mapping())
-                for record in records
-            )
+            for record in records:
+                self._last_dropped_total = max(
+                    self._last_dropped_total,
+                    record.dropped_total,
+                )
+                self._pending.append(
+                    record_to_wcs1_frame(record, self._config.mapping())
+                )
         return self._pending.pop(0)
 
     def status(self) -> dict[str, Any]:
         return {
             "source": self.source_name,
-            "firmwareVersion": "scanit-esp32-wifi-csi-v1",
+            "firmwareVersion": "scanit-esp32-wifi-csi-v2",
             "deviceConnected": self._serial is not None
             and bool(self._serial.is_open),
             "serialPort": self._port,
             "baudrate": self._baudrate,
             "supportsRawCsi": True,
+            "supportsExplicitSoundingId": self._parser.v2_records_decoded > 0,
             "explicitSubcarrierMap": bool(self._config.subcarrier_indices),
+            "csi0RecordsDecoded": self._parser.records_decoded,
+            "csi0V1RecordsDecoded": self._parser.v1_records_decoded,
+            "csi0V2RecordsDecoded": self._parser.v2_records_decoded,
+            "receiverDroppedRecordCount": self._last_dropped_total,
             "config": self._config.public_dict(),
         }
 

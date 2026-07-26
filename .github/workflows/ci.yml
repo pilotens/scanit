@@ -139,8 +139,12 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: |
           set +e
-          idf.py set-target esp32c5 > firmware-build.log 2>&1
+          . "$IDF_PATH/export.sh" > firmware-build.log 2>&1
           status=$?
+          if [ "$status" -eq 0 ]; then
+            idf.py set-target esp32c5 >> firmware-build.log 2>&1
+            status=$?
+          fi
           if [ "$status" -eq 0 ]; then
             idf.py build >> firmware-build.log 2>&1
             status=$?

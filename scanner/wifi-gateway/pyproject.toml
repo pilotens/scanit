@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 scanit-wifi-gateway = "scanit_wifi_gateway.__main__:main"
+scanit-wifi-bench = "scanit_wifi_gateway.bench_readiness:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

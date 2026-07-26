@@ -18,6 +18,7 @@ export type SimulatedWifiCsiOptions = {
   motionScale?: number;
   multipathDriftScale?: number;
   receiverNodeIds?: string[];
+  soundingSessionNonce?: number;
 };
 
 export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): WifiSensingCapture {
@@ -28,7 +29,9 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
   const receiverNodeIds = options.receiverNodeIds ?? ['rx-left', 'rx-right', 'rx-reference'];
   const motionScale = options.motionScale ?? 1;
   const multipathDriftScale = options.multipathDriftScale ?? 0.08;
+  const soundingSessionNonce = options.soundingSessionNonce ?? 0x5343414e;
   const clockDomain = `wifi-sim-${id}`;
+  const transmitterClockDomain = `wifi-sim-tx-${id}`;
   const startMonotonicNs = 2_000_000_000_000_000_000n;
   const startWallNs = 1_900_000_000_000_000_000n;
   const intervalNs = BigInt(Math.round(1_000_000_000 / soundingRateHz));
@@ -45,6 +48,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
       activeScale;
     const drift =
       multipathDriftScale * Math.sin(2 * Math.PI * 0.035 * elapsedSeconds) * activeScale;
+    const transmitterTimestampNs = startMonotonicNs + BigInt(soundingSequence) * intervalNs;
 
     receiverNodeIds.forEach((rxNodeId, linkIndex) => {
       const linkSensitivity = [1, -0.72, 0.28][linkIndex] ?? 0.2;
@@ -75,23 +79,32 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
         );
       }
 
-      const monotonicTimestampNs =
-        startMonotonicNs + BigInt(soundingSequence) * intervalNs + BigInt(linkIndex * 80_000);
+      const receiverOffsetNs = BigInt(linkIndex * 80_000);
+      const monotonicTimestampNs = transmitterTimestampNs + receiverOffsetNs;
       const wallClockUnixNs =
-        startWallNs + BigInt(soundingSequence) * intervalNs + BigInt(linkIndex * 80_000);
+        startWallNs + BigInt(soundingSequence) * intervalNs + receiverOffsetNs;
       frames.push({
         schemaVersion: 1,
         frameId: `${id}-${soundingSequence}-${rxNodeId}`,
         sessionId: id,
         sequence: sequence++,
         soundingSequence,
+        soundingIdSource: 'transmitter-payload',
+        soundingSessionNonce,
+        transmitterTimestampNs: String(transmitterTimestampNs),
+        transmitterClockDomain,
+        receiverDriverTimestampUs: Number((monotonicTimestampNs / 1_000n) & 0xffff_ffffn),
+        soundingMarkerDeltaMicroseconds: linkIndex * 80,
+        receiverDroppedRecordCount: 0,
+        csi0Version: 2,
+        csi0StatusFlags: 0x07,
         timestampNs: String(monotonicTimestampNs),
         timing: {
           clockDomain,
           timestampSource: 'synthetic-monotonic',
           monotonicTimestampNs: String(monotonicTimestampNs),
           wallClockUnixNs: String(wallClockUnixNs),
-          uncertaintyNs: 120_000,
+          uncertaintyNs: 120_000 + linkIndex * 80_000,
           anchorMonotonicNs: String(startMonotonicNs),
           anchorWallClockUnixNs: String(startWallNs),
         },
@@ -112,7 +125,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
         packetSequence: soundingSequence,
         transmitterMac: '02:00:00:00:00:01',
         receiverMac: `02:00:00:00:01:0${linkIndex + 1}`,
-        firmwareVersion: 'wifi-csi-simulator-v1',
+        firmwareVersion: 'wifi-csi-simulator-v2',
         source: 'deterministic-wifi-csi-simulator',
         qualityFlags: [],
         isSimulated: true,
@@ -129,7 +142,7 @@ export function simulateWifiCsiCapture(options: SimulatedWifiCsiOptions = {}): W
     hardwareProfileId: 'esp32-c5-csi-array-simulator',
     frames,
     calibrationSoundingCount,
-    tags: ['wifi-csi', 'simulated'],
+    tags: ['wifi-csi', 'simulated', 'explicit-sounding-id'],
     notes: [],
   };
 }

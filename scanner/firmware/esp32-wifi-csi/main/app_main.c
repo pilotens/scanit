@@ -33,12 +33,14 @@
 #define CSI_STATUS_TIMESTAMP_MATCHED (1u << 2)
 #define CSI_STATUS_PAYLOAD_TRUNCATED (1u << 3)
 #define CSI_STATUS_QUEUE_DROPS_PRESENT (1u << 4)
+#define CSI_STATUS_ANTENNA_INDEX_UNKNOWN (1u << 5)
 
 static const char *TAG = "scanit-wifi-csi";
 static QueueHandle_t s_csi_queue;
 static uint32_t s_sequence;
 static uint32_t s_queue_drops;
 static uint32_t s_marker_misses;
+static uint32_t s_invalid_channel_estimates;
 static uint32_t s_records_written;
 static portMUX_TYPE s_marker_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -217,6 +219,10 @@ static void csi_rx_callback(void *ctx, wifi_csi_info_t *info)
     if (info == NULL || info->buf == NULL || info->len == 0 || s_csi_queue == NULL) {
         return;
     }
+    if (!info->rx_ctrl.rx_channel_estimate_info_vld) {
+        s_invalid_channel_estimates++;
+        return;
+    }
 
     queued_csi_record_t record = {0};
     record.header.magic = CSI_RECORD_MAGIC;
@@ -233,11 +239,13 @@ static void csi_rx_callback(void *ctx, wifi_csi_info_t *info)
     record.header.rssi_dbm = info->rx_ctrl.rssi;
     record.header.noise_floor_dbm = info->rx_ctrl.noise_floor;
     record.header.channel = info->rx_ctrl.channel;
-    record.header.secondary_channel = info->rx_ctrl.secondary_channel;
-    record.header.antenna = info->rx_ctrl.ant;
-    record.header.mcs = info->rx_ctrl.mcs;
-    record.header.bandwidth_40mhz = info->rx_ctrl.cwb;
+    record.header.secondary_channel = (uint8_t)info->rx_ctrl.second;
+    record.header.antenna = 0;
+    record.header.mcs = info->rx_ctrl.rate;
+    record.header.bandwidth_40mhz =
+        info->rx_ctrl.second != WIFI_SECOND_CHAN_NONE ? 1u : 0u;
     record.header.first_word_invalid = info->first_word_invalid ? 1u : 0u;
+    record.header.status_flags |= CSI_STATUS_ANTENNA_INDEX_UNKNOWN;
     record.header.payload_bytes = info->len > CSI_MAX_BYTES ? CSI_MAX_BYTES : info->len;
     record.header.dropped_total = s_queue_drops;
     if (info->len > CSI_MAX_BYTES) {
@@ -310,10 +318,12 @@ static void write_record_to_gateway(queued_csi_record_t *record)
     if ((s_records_written % 200u) == 0u) {
         ESP_LOGI(
             TAG,
-            "written=%" PRIu32 " queue_drops=%" PRIu32 " marker_misses=%" PRIu32,
+            "written=%" PRIu32 " queue_drops=%" PRIu32
+            " marker_misses=%" PRIu32 " invalid_estimates=%" PRIu32,
             s_records_written,
             s_queue_drops,
-            s_marker_misses
+            s_marker_misses,
+            s_invalid_channel_estimates
         );
     }
 }
@@ -368,7 +378,7 @@ static esp_err_t configure_csi(void)
         .acquire_csi_mu = false,
         .acquire_csi_dcm = false,
         .acquire_csi_beamformed = false,
-        .acquire_csi_he_stbc = 2,
+        .acquire_csi_he_stbc_mode = 2,
         .val_scale_cfg = 0,
     };
 #else

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 
 from .aggregate import MultiLinkWifiCsiSource
+from .digital_bench import DigitalBenchCsi0Source, digital_bench_scenario
 from .server import WifiCsiGatewayServer
 from .source import FakeWifiCsiSource, SerialWifiCsiSource, WifiCsiSource, WifiGatewayConfig
 
@@ -47,6 +47,13 @@ def _build_source(args: argparse.Namespace) -> WifiCsiSource:
     if args.source == "fake":
         receiver_ids = _receiver_ids(args.rx_node_id, args.fake_receivers)
         sources = [(receiver_id, FakeWifiCsiSource()) for receiver_id in receiver_ids]
+    elif args.source == "bench":
+        receiver_ids = _receiver_ids(args.rx_node_id, args.bench_receivers)
+        scenario = digital_bench_scenario(args.bench_scenario, len(receiver_ids))
+        sources = [
+            (receiver_id, DigitalBenchCsi0Source(index, scenario))
+            for index, receiver_id in enumerate(receiver_ids)
+        ]
     else:
         ports: list[str] = args.serial_port or []
         if not ports:
@@ -66,12 +73,29 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="ScanIt Wi-Fi CSI0 ingress and WCS1 WebSocket gateway."
     )
-    parser.add_argument("--source", choices=("fake", "serial"), default="fake")
+    parser.add_argument("--source", choices=("fake", "bench", "serial"), default="bench")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--serial-port", action="append")
     parser.add_argument("--baudrate", type=int, default=2_000_000)
     parser.add_argument("--fake-receivers", type=int, default=3)
+    parser.add_argument("--bench-receivers", type=int, default=3)
+    parser.add_argument(
+        "--bench-scenario",
+        choices=(
+            "healthy",
+            "start-offsets",
+            "lossy",
+            "clock-drift",
+            "motion-burst",
+            "phase-jump",
+            "queue-drop",
+            "identity-fallback",
+            "nonce-change",
+            "truncated-payload",
+        ),
+        default="healthy",
+    )
     parser.add_argument("--rx-node-id", action="append")
     parser.add_argument("--tx-node-id", default="tx-node")
     parser.add_argument("--session-id", default="wifi-session")
@@ -79,7 +103,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel", type=int, default=36)
     parser.add_argument("--center-frequency-hz", type=int, default=5_180_000_000)
     parser.add_argument("--bandwidth-hz", type=int, default=20_000_000)
-    parser.add_argument("--phy", choices=("legacy-ofdm", "ht", "vht", "he", "eht"), default="he")
+    parser.add_argument("--phy", choices=("legacy-ofdm", "ht", "vht", "he", "eht"), default="ht")
     parser.add_argument("--frame-rate-hz", type=float, default=20.0)
     parser.add_argument(
         "--subcarriers",
@@ -93,6 +117,8 @@ def _parser() -> argparse.ArgumentParser:
 async def _run(args: argparse.Namespace) -> None:
     if args.fake_receivers < 1:
         raise ValueError("--fake-receivers must be positive.")
+    if args.bench_receivers < 1:
+        raise ValueError("--bench-receivers must be positive.")
     source = _build_source(args)
     config = WifiGatewayConfig(
         session_id=args.session_id,

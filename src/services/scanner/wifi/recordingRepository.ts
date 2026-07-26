@@ -6,6 +6,7 @@ import { encryptedStorage } from '@/services/storage/encryptedStorage';
 
 import { bytesToBase64, base64ToBytes } from '../recording/base64';
 import { crc32 } from '../protocol/crc32';
+import { assertWifiCaptureProvenance } from './provenance';
 import { decodeWifiCsiFrame, encodeWifiCsiFrame } from './protocol/wcs1Codec';
 
 const MANIFEST_PREFIX = 'scanner.wifi.manifest.v1.';
@@ -46,6 +47,7 @@ export const wifiSensingRecordingRepository = {
     if (capture.frames.length < capture.calibrationSoundingCount * 2 + 20) {
       throw new Error('Wi-Fi sensing capture is too short for calibration and analysis.');
     }
+    const provenance = assertWifiCaptureProvenance(capture);
     const packets = capture.frames.map(encodeWifiCsiFrame);
     const totalBytes = packets.reduce((sum, packet) => sum + packet.length, 0);
     if (totalBytes > MAX_RECORDING_BYTES) {
@@ -80,7 +82,10 @@ export const wifiSensingRecordingRepository = {
       aggregateCrc32: aggregateCrc(packets),
       firstTimestampNs: first.timing?.monotonicTimestampNs ?? first.timestampNs,
       lastTimestampNs: last.timing?.monotonicTimestampNs ?? last.timestampNs,
-      qualityFlags: unique(capture.frames.flatMap(({ qualityFlags }) => qualityFlags)),
+      qualityFlags: unique([
+        ...capture.frames.flatMap(({ qualityFlags }) => qualityFlags),
+        provenance.physical ? 'physical-provenance-verified' : 'simulated-provenance',
+      ]),
       tags: unique(capture.tags),
       notes: capture.notes,
       isSimulated: capture.frames.every(({ isSimulated }) => isSimulated),
@@ -137,7 +142,7 @@ export const wifiSensingRecordingRepository = {
     if (frames.some(({ sessionId }) => sessionId !== id)) {
       throw new Error('Wi-Fi sensing frames do not match the manifest session.');
     }
-    return {
+    const capture: WifiSensingCapture = {
       schemaVersion: 1,
       id,
       createdAt: manifest.createdAt,
@@ -149,6 +154,8 @@ export const wifiSensingRecordingRepository = {
       tags: manifest.tags,
       notes: manifest.notes,
     };
+    assertWifiCaptureProvenance(capture);
+    return capture;
   },
 
   async remove(id: string): Promise<void> {

@@ -1,0 +1,23 @@
+menu "ScanIt scanner bridge"
+
+config SCANIT_WIFI_SSID
+    string "Scanner access-point SSID"
+    default "ScanIt-Scanner"
+
+config SCANIT_WIFI_PASSWORD
+    string "Scanner access-point password"
+    default "scanit-lab"
+
+config SCANIT_UART_RX_PIN
+    int "SCN1 UART RX pin"
+    default 18
+
+config SCANIT_UART_TX_PIN
+    int "SCN1 UART TX pin"
+    default 17
+
+config SCANIT_UART_BAUD
+    int "SCN1 UART baud rate"
+    default 2000000
+
+endmenu

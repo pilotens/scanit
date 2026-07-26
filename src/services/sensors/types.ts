@@ -19,4 +19,5 @@ export interface RfScannerProvider {
   connect(): Promise<SensorHealth>;
   calibrate(): Promise<void>;
   scanPosition(position: RfPosition, durationMs: number): Promise<RfObservation>;
+  disconnect?(): void | Promise<void>;
 }

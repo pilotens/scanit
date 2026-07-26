@@ -1,0 +1,89 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { generateSyntheticRadioFrame } from '@/services/scanner/emulator/syntheticScanner';
+import {
+  compareReplayToPersonalBaseline,
+  scannerBaselineRepository,
+} from '@/services/scanner/baseline/baselineRepository';
+import { scannerRecordingRepository } from '@/services/scanner/recording/recordingRepository';
+import { replayScannerRecording } from '@/services/scanner/replay/replayEngine';
+
+const buildFrames = () => {
+  const frameRateHz = 20;
+  const frameCount = 220;
+  const calibrationFrames = 20;
+  return {
+    calibrationFrames,
+    frames: Array.from({ length: frameCount }, (_, sequence) =>
+      generateSyntheticRadioFrame({
+        sessionId: 'quality-baseline-test',
+        sequence,
+        position: 'apex',
+        elapsedSeconds: sequence / frameRateHz,
+        motionScale: sequence < calibrationFrames ? 0 : 1,
+      }),
+    ),
+  };
+};
+
+describe('scanner quality, physiology and personal baseline', () => {
+  beforeEach(async () => {
+    await scannerRecordingRepository.clear();
+    await scannerBaselineRepository.clear();
+  });
+
+  it('approves a stable calibrated raw-cube capture and separates periodic bands', async () => {
+    const input = buildFrames();
+    const manifest = await scannerRecordingRepository.save({
+      frames: input.frames,
+      source: 'emulator',
+      sourceDescriptor: 'quality-test',
+      hardwareProfileId: 'infineon-bgt60tr13c-emulator',
+      calibrationFrameCount: input.calibrationFrames,
+    });
+    const replay = replayScannerRecording(
+      await scannerRecordingRepository.load(manifest.id),
+    );
+
+    expect(replay.processingVersion).toBe('scanner-pipeline-v4');
+    expect(replay.qualityGate.version).toBe('scanner-quality-v3');
+    expect(replay.qualityGate.verdict).toBe('approved');
+    expect(replay.qualityGate.score).toBeGreaterThanOrEqual(75);
+    expect(replay.qualityGate.estimatedFrameRateHz).toBeCloseTo(20, 1);
+    expect(replay.calibration.rxCalibration?.qualityScore).toBeGreaterThanOrEqual(60);
+    expect(replay.targetTracking.confidence).toBeGreaterThan(0.25);
+    expect(replay.summary.averageChirpCoherence).toBeGreaterThan(0.5);
+    expect(replay.physiology.version).toBe('scanner-physiology-v3');
+    expect(replay.physiology.cardiacTrace.length).toBeGreaterThan(10);
+    expect(replay.physiology.respirationTrace.length).toBeGreaterThan(10);
+    expect(replay.physiology.cardiacMechanicalRateBpm).toBeGreaterThan(40);
+    expect(replay.physiology.cardiacMechanicalRateBpm).toBeLessThan(180);
+    expect(replay.physiology.respiratoryRateBpm).toBeGreaterThan(5);
+    expect(replay.physiology.respiratoryRateBpm).toBeLessThan(35);
+    expect(replay.clockModel.status).toBe('synchronized');
+    expect(replay.interpretation.medicalInterpretationState).toBe('not-validated');
+    expect(replay.interpretation.tissueInterpretationState).toBe('not-supported');
+  });
+
+  it('only builds a baseline from approved captures and recognizes the source replay', async () => {
+    const input = buildFrames();
+    const manifest = await scannerRecordingRepository.save({
+      frames: input.frames,
+      source: 'emulator',
+      sourceDescriptor: 'baseline-test',
+      hardwareProfileId: 'infineon-bgt60tr13c-emulator',
+      calibrationFrameCount: input.calibrationFrames,
+    });
+    const replay = replayScannerRecording(
+      await scannerRecordingRepository.load(manifest.id),
+    );
+    const baseline = await scannerBaselineRepository.addReplay(replay);
+    const comparison = compareReplayToPersonalBaseline(baseline, replay);
+
+    expect(baseline.sourceCount).toBe(1);
+    expect(baseline.sourceRecordingIds).toContain(replay.recordingId);
+    expect(comparison.compatible).toBe(true);
+    expect(comparison.profileCosineSimilarity).toBeCloseTo(1, 5);
+    expect(comparison.classification).toBe('within-baseline');
+  });
+});

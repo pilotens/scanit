@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -22,6 +22,30 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund --loglevel=error
+
+      - name: Capture scanner core tests
+        id: scanner_tests
+        shell: bash
+        run: |
+          set +e
+          npm test > scanner-tests.log 2>&1
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cat scanner-tests.log
+          exit 0
+
+      - name: Upload scanner test diagnostics
+        if: steps.scanner_tests.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-test-diagnostics
+          path: scanner-tests.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail on scanner test errors
+        if: steps.scanner_tests.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Capture type-check result
         id: typecheck
@@ -49,3 +73,95 @@ jobs:
 
       - name: Export web build
         run: npx expo export --platform web
+
+  scanner-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install gateway
+        run: python -m pip install --disable-pip-version-check -e scanner/gateway
+
+      - name: Gateway protocol and fake-source tests
+        run: python -m unittest discover -s scanner/gateway/tests -v
+
+  wifi-csi-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Wi-Fi CSI gateway
+        run: python -m pip install --disable-pip-version-check -e scanner/wifi-gateway
+
+      - name: CSI0, SND1, WCS1, multi-link and control tests
+        run: python -m unittest discover -s scanner/wifi-gateway/tests -v
+
+  esp32-c5-wifi-firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: espressif/idf:v5.5.4
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sounding-transmitter
+            project: scanner/firmware/esp32-wifi-sounding
+          - name: csi-receiver
+            project: scanner/firmware/esp32-wifi-csi
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Mark checkout as safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Capture ESP32-C5 firmware build
+        id: firmware_build
+        shell: bash
+        working-directory: ${{ matrix.project }}
+        run: |
+          set +e
+          . "$IDF_PATH/export.sh" > firmware-build.log 2>&1
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            idf.py set-target esp32c5 >> firmware-build.log 2>&1
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            idf.py build >> firmware-build.log 2>&1
+            status=$?
+          fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cat firmware-build.log
+          exit 0
+
+      - name: Upload ESP32-C5 firmware diagnostics
+        if: steps.firmware_build.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-c5-${{ matrix.name }}-diagnostics
+          path: ${{ matrix.project }}/firmware-build.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail on ESP32-C5 firmware build errors
+        if: steps.firmware_build.outputs.exit_code != '0'
+        run: exit 1

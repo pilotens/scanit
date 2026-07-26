@@ -1,0 +1,31 @@
+menu "ScanIt Wi-Fi CSI receiver"
+
+config SCANIT_CSI_CHANNEL
+    int "Controlled sounding channel"
+    range 36 177
+    default 36
+
+config SCANIT_CSI_MATCH_WINDOW_US
+    int "Maximum SND1-to-CSI timestamp delta (microseconds)"
+    range 50 5000
+    default 750
+
+config SCANIT_CSI_UART_PORT
+    int "Dedicated binary CSI0 UART port"
+    range 1 2
+    default 1
+
+config SCANIT_CSI_UART_TX_GPIO
+    int "CSI0 UART TX GPIO"
+    default 5
+
+config SCANIT_CSI_UART_RX_GPIO
+    int "CSI0 UART RX GPIO"
+    default 4
+
+config SCANIT_CSI_UART_BAUD
+    int "CSI0 UART baud rate"
+    range 115200 5000000
+    default 2000000
+
+endmenu

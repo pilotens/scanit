@@ -141,6 +141,19 @@ static esp_err_t initialise_wifi(void)
     ESP_RETURN_ON_ERROR(esp_wifi_init(&wifi_config), TAG, "wifi init");
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "wifi storage");
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "wifi mode");
+
+    wifi_tx_rate_config_t tx_rate = {
+        .phymode = WIFI_PHY_MODE_HT20,
+        .rate = WIFI_PHY_RATE_MCS0_LGI,
+        .ersu = false,
+        .dcm = false,
+    };
+    ESP_RETURN_ON_ERROR(
+        esp_wifi_config_80211_tx(WIFI_IF_STA, &tx_rate),
+        TAG,
+        "HT20 MCS0 raw TX"
+    );
+
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start");
     ESP_RETURN_ON_ERROR(esp_wifi_set_country_code("SE", true), TAG, "country code");
     ESP_RETURN_ON_ERROR(
@@ -176,7 +189,7 @@ void app_main(void)
     ESP_ERROR_CHECK(initialise_wifi());
     ESP_LOGI(
         TAG,
-        "controlled SND1 sounding started on channel %d at %d Hz",
+        "controlled SND1 HT20/MCS0 sounding started on channel %d at %d Hz",
         CONFIG_SCANIT_SOUNDING_CHANNEL,
         CONFIG_SCANIT_SOUNDING_RATE_HZ
     );

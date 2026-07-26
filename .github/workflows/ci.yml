@@ -120,9 +120,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project:
-          - scanner/firmware/esp32-wifi-sounding
-          - scanner/firmware/esp32-wifi-csi
+        include:
+          - name: sounding-transmitter
+            project: scanner/firmware/esp32-wifi-sounding
+          - name: csi-receiver
+            project: scanner/firmware/esp32-wifi-csi
 
     steps:
       - name: Checkout
@@ -131,8 +133,31 @@ jobs:
       - name: Mark checkout as safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build ESP32-C5 firmware
+      - name: Capture ESP32-C5 firmware build
+        id: firmware_build
+        shell: bash
         working-directory: ${{ matrix.project }}
         run: |
-          idf.py set-target esp32c5
-          idf.py build
+          set +e
+          idf.py set-target esp32c5 > firmware-build.log 2>&1
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            idf.py build >> firmware-build.log 2>&1
+            status=$?
+          fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          cat firmware-build.log
+          exit 0
+
+      - name: Upload ESP32-C5 firmware diagnostics
+        if: steps.firmware_build.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-c5-${{ matrix.name }}-diagnostics
+          path: ${{ matrix.project }}/firmware-build.log
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail on ESP32-C5 firmware build errors
+        if: steps.firmware_build.outputs.exit_code != '0'
+        run: exit 1

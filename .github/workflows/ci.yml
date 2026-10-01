@@ -47,5 +47,8 @@ jobs:
         if: steps.typecheck.outputs.exit_code != '0'
         run: exit 1
 
+      - name: Run MVP acceptance check
+        run: npm run mvp:check
+
       - name: Export web build
         run: npx expo export --platform web

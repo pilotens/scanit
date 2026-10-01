@@ -1,6 +1,6 @@
 # ScanIt
 
-ScanIt is an early mobile research platform for combining continuous wearable measurements with a guided, extended RF scan.
+ScanIt is an early mobile research platform for developing spatially tracked multimodal body imaging with ultrasound, microwave/RF, motion sensing, and explicit measurement provenance.
 
 The current repository contains a runnable **Expo/React Native prototype** with simulated sensor data. It does not diagnose, predict, or exclude myocardial infarction or any other medical condition.
 
@@ -11,7 +11,7 @@ The current repository contains a runnable **Expo/React Native prototype** with 
 - Modular interfaces for wearable and RF sensor providers
 - Simulated fusion of ECG/PPG/SpO₂-style data and RF observations
 - Scan history, sensor inventory, research settings, and safety wording
-- Domain models designed for future Wi-Fi CSI, Bluetooth Channel Sounding, UWB, and 60 GHz adapters
+- Multimodal imaging contracts for ultrasound, microwave, UWB/mmWave, pose tracking, voxels, confidence, and provenance\n- Deterministic evidence-grid reconstruction baseline and synthetic chest-sweep generator
 
 ## Technology
 
@@ -37,6 +37,7 @@ Then open the project in Expo Go, an emulator, or the web target.
 ```bash
 npm run typecheck
 npm run lint
+npm run mvp:check
 ```
 
 ## Important boundaries
@@ -50,4 +51,5 @@ npm run lint
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Data model](docs/DATA_MODEL.md)
-- [Roadmap](docs/ROADMAP.md)
+- [Roadmap](docs/ROADMAP.md)\n- [Multimodal imaging architecture](docs/IMAGING_ARCHITECTURE.md)
+- [Hardware handoff](docs/HARDWARE_HANDOFF.md)

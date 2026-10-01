@@ -37,6 +37,7 @@ Then open the project in Expo Go, an emulator, or the web target.
 ```bash
 npm run typecheck
 npm run lint
+npm run mvp:check
 ```
 
 ## Important boundaries
@@ -51,3 +52,4 @@ npm run lint
 - [Architecture](docs/ARCHITECTURE.md)
 - [Data model](docs/DATA_MODEL.md)
 - [Roadmap](docs/ROADMAP.md)\n- [Multimodal imaging architecture](docs/IMAGING_ARCHITECTURE.md)
+- [Hardware handoff](docs/HARDWARE_HANDOFF.md)

@@ -28,7 +28,7 @@ export default function BrowserSensorLab() {
     const delta = values.map((x) => x - avg);
     setResult({
       count: points.length,
-      duration: (points[points.length - 1].t - points[0].t) / 1000,
+      duration: (points[points.length - 1]!.t - points[0]!.t) / 1000,
       rms: Math.sqrt(delta.reduce((s, x) => s + x * x, 0) / delta.length),
       peak: Math.max(...delta.map(Math.abs)),
     });

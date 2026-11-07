@@ -34,7 +34,8 @@ export default function DashboardScreen() {
           {latestAssessment?.summary ?? 'Genomför en skanning för att skapa en första baslinje.'}
         </Text>
         <AppButton label="Starta utvidgad skanning" onPress={() => router.push('/scan')} />
-        <AppButton label="Öppna Imaging Lab" secondary onPress={() => router.push('/imaging')} />
+        <AppButton label="Mät med iPhone 15 Pro Max" secondary onPress={() => router.push('/phone-sensors')} />
+        <AppButton label="Öppna Imaging Lab (simulering)" secondary onPress={() => router.push('/imaging')} />
       </Card>
 
       <SectionHeader title="Klockdata" detail={`Uppdaterad ${formatDateTime(latestVitals.timestamp)}`} />

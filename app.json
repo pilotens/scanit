@@ -15,7 +15,11 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static"
+      "output": "static",
+      "name": "ScanIt",
+      "shortName": "ScanIt",
+      "themeColor": "#0B6E5C",
+      "backgroundColor": "#F4F7F6"
     },
     "plugins": [
       "expo-router",
@@ -30,7 +34,8 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": true,
+      "baseUrl": "/scanit"
     }
   }
 }

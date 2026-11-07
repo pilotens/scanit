@@ -29,7 +29,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
-    "expo-sensors": "~16.0.0"
+    "expo-sensors": "~15.0.7"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

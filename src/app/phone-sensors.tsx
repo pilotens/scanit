@@ -32,7 +32,7 @@ function summarize(samples: Sample[]): Summary | null {
     for (let i = 0; i < samples.length; i += 1) {
       const phase = 2 * Math.PI * hz * (samples[i]!.timestamp - samples[0]!.timestamp) / 1000;
       real += (deviations[i]! - mean) * Math.cos(phase);
-      imag += (deviations[i] - mean) * Math.sin(phase);
+      imag += (deviations[i]! - mean) * Math.sin(phase);
     }
     const power = real * real + imag * imag;
     if (power > bestPower) { bestPower = power; bestHz = hz; }

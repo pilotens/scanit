@@ -53,3 +53,18 @@ npm run mvp:check
 - [Data model](docs/DATA_MODEL.md)
 - [Roadmap](docs/ROADMAP.md)\n- [Multimodal imaging architecture](docs/IMAGING_ARCHITECTURE.md)
 - [Hardware handoff](docs/HARDWARE_HANDOFF.md)
+
+## iPhone 15 Pro Max — Expo Go phone-only mode
+
+The `/phone-sensors` route uses the iPhone's real accelerometer via `expo-sensors`. It records a 15-second movement/vibration window and reports raw-signal summary statistics. It does **not** image internal anatomy, measure ECG, or diagnose disease. The separate `/imaging` route remains explicitly synthetic.
+
+To launch on a physical iPhone:
+
+```bash
+npm install
+npx expo start --tunnel
+```
+
+Install Expo Go on the phone and scan the terminal QR code. The developer computer must remain running during the session. Expo Go must support the project's Expo SDK; if not, align the SDK with the currently supported Expo Go version or build a development client.
+
+There is no remote phone installation from GitHub alone.

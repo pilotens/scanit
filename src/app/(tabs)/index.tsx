@@ -20,11 +20,12 @@ export default function DashboardScreen() {
   return (
     <Screen
       title="ScanIt"
-      subtitle="Kontinuerlig klockmätning med kompletterande RF-skanning">
+      subtitle="Verkliga iPhone-sensorer och separat forskningssimulering">
+      <Card muted><Text style={styles.warningTitle}>Verklig mätning: välj rörelsemätning nedan</Text><Text style={styles.warningBody}>Övriga värden och den anatomiska rekonstruktionen är demo. iPhone kan inte avbilda inre organ utan extern utrustning.</Text></Card>
       <Card style={styles.hero}>
         <View style={styles.heroHeader}>
           <View style={styles.heroCopy}>
-            <Text style={styles.eyebrow}>AKTUELL INDIKATION</Text>
+            <Text style={styles.eyebrow}>SIMULERAD INDIKATION</Text>
             <Text style={styles.heroTitle}>{latestAssessment?.title ?? 'Ingen bedömning ännu'}</Text>
           </View>
           <StatusPill level={latestAssessment?.level ?? 'normal'} />
@@ -33,12 +34,12 @@ export default function DashboardScreen() {
         <Text style={styles.heroBody}>
           {latestAssessment?.summary ?? 'Genomför en skanning för att skapa en första baslinje.'}
         </Text>
-        <AppButton label="Starta utvidgad skanning" onPress={() => router.push('/scan')} />
-        <AppButton label="Mät med iPhone 15 Pro Max" secondary onPress={() => router.push('/phone-sensors')} />
+        <AppButton label="Starta verklig rörelsemätning" onPress={() => router.push('/phone-sensors')} />
+        <AppButton label="Demonstrera simulerad RF-skanning" secondary onPress={() => router.push('/scan')} />
         <AppButton label="Öppna Imaging Lab (simulering)" secondary onPress={() => router.push('/imaging')} />
       </Card>
 
-      <SectionHeader title="Klockdata" detail={`Uppdaterad ${formatDateTime(latestVitals.timestamp)}`} />
+      <SectionHeader title="Simulerade klockvärden (ej uppmätta)" detail={`Uppdaterad ${formatDateTime(latestVitals.timestamp)}`} />
       <View style={styles.metricsRow}>
         <MetricCard
           label="Puls"
@@ -64,7 +65,7 @@ export default function DashboardScreen() {
         />
       </View>
 
-      <SectionHeader title="Systemstatus" />
+      <SectionHeader title="Demostatus (simulerade anslutningar)" />
       <Card>
         <View style={styles.statusRow}>
           <View>

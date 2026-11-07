@@ -20,7 +20,7 @@ function summarize(samples: Sample[]): Summary | null {
   const deviations = samples.map((s) => Math.hypot(s.x, s.y, s.z) - baseline);
   const rms = Math.sqrt(deviations.reduce((sum, d) => sum + d * d, 0) / deviations.length);
   const peak = Math.max(...deviations.map(Math.abs));
-  const seconds = (samples[samples.length - 1].timestamp - samples[0].timestamp) / 1000;
+  const seconds = (samples[samples.length - 1]!.timestamp - samples[0]!.timestamp) / 1000;
 
   // Exploratory periodicity metric only; not a heart-rate or respiratory-rate estimate.
   let bestHz: number | null = null;
@@ -30,8 +30,8 @@ function summarize(samples: Sample[]): Summary | null {
     let real = 0;
     let imag = 0;
     for (let i = 0; i < samples.length; i += 1) {
-      const phase = 2 * Math.PI * hz * (samples[i].timestamp - samples[0].timestamp) / 1000;
-      real += (deviations[i] - mean) * Math.cos(phase);
+      const phase = 2 * Math.PI * hz * (samples[i]!.timestamp - samples[0]!.timestamp) / 1000;
+      real += (deviations[i]! - mean) * Math.cos(phase);
       imag += (deviations[i] - mean) * Math.sin(phase);
     }
     const power = real * real + imag * imag;

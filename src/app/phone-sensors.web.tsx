@@ -146,6 +146,7 @@ export default function BrowserSensorLab() {
           {summary ? <>
             <Text style={styles.body}>Variation i RMS mellan mätningar: {summary.rmsRangePercent.toFixed(1)} % av medelvärdet.</Text>
             <Text style={styles.body}>Variation i kandidatintervall: {summary.medianIntervalRangePercent === null ? 'Otillräckligt underlag' : `${summary.medianIntervalRangePercent.toFixed(1)} %`}</Text>
+            <Text style={styles.body}>Händelsejusterad mallkorrelation: {summary.templateSimilarity === null ? 'Otillräckligt underlag' : summary.templateSimilarity.toFixed(2)} ({summary.templatePairs} jämförbara mätpar)</Text>
             <Text style={styles.body}>Direkt kurvkorrelation: {summary.waveformSimilarity === null ? 'Ej beräkningsbar' : summary.waveformSimilarity.toFixed(2)} (tidsförskjutningskänslig).</Text>
             <Text style={styles.caption}>{summary.conclusion}</Text>
           </> : <Text style={styles.body}>Minst två mätningar behövs för jämförelse.</Text>}
@@ -168,6 +169,7 @@ export default function BrowserSensorLab() {
           <Text style={styles.body}>{scg.explanation}</Text>
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>
           <Text style={styles.body}>Intervall som uppfyllde algoritmens kriterier: {scg.intervalCoveragePercent === null ? 'Ej beräkningsbart' : `${scg.intervalCoveragePercent.toFixed(1)} %`} · Bortvalda: {scg.rejectedIntervals} (korta: {scg.shortIntervals}, långa: {scg.longIntervals})</Text>
+          <Text style={styles.body}>Mekanisk mall: {scg.eventTemplate ? `${scg.templateEventCount} justerade impulskandidater` : 'Otillräckligt underlag'}</Text>
           <Text style={styles.body}>Filtrerad signal RMS: {scg.signalRms.toFixed(4)} m/s²</Text>
           <Text style={styles.body}>Tidsjitter (medianavvikelse): {scg.timingJitterMs.toFixed(2)} ms · {scg.resampled ? 'Interpolerad till jämna tidssteg' : 'Ej interpolerad'}</Text>
           {scg.artifactWarning ? <Text style={styles.caption}>{scg.artifactWarning}</Text> : null}

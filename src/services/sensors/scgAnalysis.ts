@@ -25,6 +25,7 @@ export type ScgReport = {
   templateConsistency: number | null;
   signalOrigin: 'unverified_mechanical';
   harmonicCheck: {candidateHz:number|null; halfFrequencyHz:number|null; alternatingSimilarity:number|null; sameParitySimilarity:number|null; lagOneCorrelation:number|null; lagTwoCorrelation:number|null; interpretation:string};
+  harmonicChecks: {axis:'x'|'y'|'z'; fundamentalHz:number|null; secondHarmonicHz:number|null; frequencyRatio:number|null; fundamentalPower:number|null; secondHarmonicPower:number|null; windowsAgree:boolean; interpretation:string}[];
 };
 
 function median(v:number[]):number {
@@ -147,6 +148,42 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     : lagTwoCorrelation-lagOneCorrelation>.2
     ? 'Varannan impulskandidat liknar varandra mer än intilliggande kandidater. Möjligt A-B-mönster; inte bekräftad harmonisk relation.'
     : 'Inget tydligt A-B-mönster i signalformen. En eventuell 2:1-relation kräver separat spektral verifiering på samma axel.';
+  // Same-axis 2:1 spectral test. Analyze two disjoint halves independently;
+  // a ratio alone is not evidence of cardiac origin.
+  const harmonicChecks=axes.map(({axis,filtered})=>{
+    const analyzeWindow=(values:number[])=>{
+      const centered=values.map(v=>v-values.reduce((a,b)=>a+b,0)/values.length);
+      const powerAt=(freq:number)=>{
+        let re=0,im=0;
+        for(let i=0;i<centered.length;i++){
+          const w=.5-.5*Math.cos(2*Math.PI*i/(centered.length-1));
+          const phase=2*Math.PI*freq*i/fs;
+          re+=centered[i]!*w*Math.cos(phase);
+          im-=centered[i]!*w*Math.sin(phase);
+        }
+        return (re*re+im*im)/(centered.length*centered.length);
+      };
+      const step=fs/centered.length;
+      let bestFreq:number|null=null,bestPower=0;
+      for(let f=Math.ceil(.4/step)*step;f<=1.6;f+=step){
+        const p=powerAt(f)+powerAt(2*f);
+        if(p>bestPower){bestPower=p;bestFreq=f;}
+      }
+      return bestFreq===null?null:{freq:bestFreq,base:powerAt(bestFreq),second:powerAt(2*bestFreq)};
+    };
+    const full=analyzeWindow(filtered);
+    const mid=Math.floor(filtered.length/2);
+    const first=analyzeWindow(filtered.slice(0,mid));
+    const second=analyzeWindow(filtered.slice(mid));
+    const windowsAgree=!!(first&&second&&Math.abs(first.freq-second.freq)<=.15);
+    const fundamentalHz=full?.freq??null;
+    const secondHarmonicHz=fundamentalHz===null?null:2*fundamentalHz;
+    return {axis,fundamentalHz,secondHarmonicHz,
+      frequencyRatio:fundamentalHz===null?null:2,
+      fundamentalPower:full?.base??null,secondHarmonicPower:full?.second??null,
+      windowsAgree,
+      interpretation:!windowsAgree?'Frekvensparet är inte stabilt mellan tidsfönstren; harmonisk relation ej verifierad.':'Möjligt stabilt 2:1-frekvenspar på samma axel; signalens ursprung är okänt.'};
+  });
   const candidate=events.length>=15 && plausible.length>=events.length*.85 &&
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
@@ -168,6 +205,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
       : null,
     eventTemplate,templateEventCount:snippets.length,templateConsistency,signalOrigin:'unverified_mechanical',
     harmonicCheck:{candidateHz,halfFrequencyHz,alternatingSimilarity,sameParitySimilarity,lagOneCorrelation,lagTwoCorrelation,interpretation},
+    harmonicChecks,
     axis:chosen.axis,
     filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
   };

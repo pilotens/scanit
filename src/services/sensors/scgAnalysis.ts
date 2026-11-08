@@ -18,6 +18,8 @@ export type ScgReport = {
   baselineRms: number;
   signalRms: number;
   artifactWarning: string | null;
+  timingJitterMs: number;
+  resampled: boolean;
 };
 
 function median(v:number[]):number {
@@ -41,8 +43,26 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   if(fs<35)return null;
   const intervals=points.slice(1).map((p,i)=>p.t-points[i]!.t);
   const gapFraction=intervals.filter(v=>v>50||v<5).length/intervals.length;
+  const nominalStep=1000/fs;
+  const timingJitterMs=median(intervals.map(v=>Math.abs(v-nominalStep)));
+  // Interpolate all axes onto a uniform timeline before filtering. Original timestamps
+  // remain the source of truth for event intervals and are reconstructed below.
+  const start=points[0]!.t;
+  const uniform=Array.from({length:points.length},(_,i)=>{
+    const t=start+i*nominalStep;
+    return {t,x:0,y:0,z:0};
+  });
+  let cursor=0;
+  for(const p of uniform){
+    while(cursor<points.length-2 && points[cursor+1]!.t<p.t)cursor++;
+    const a=points[cursor]!,b=points[cursor+1]!;
+    const weight=Math.max(0,Math.min(1,(p.t-a.t)/Math.max(1e-9,b.t-a.t)));
+    p.x=a.x+(b.x-a.x)*weight;
+    p.y=a.y+(b.y-a.y)*weight;
+    p.z=a.z+(b.z-a.z)*weight;
+  }
   const axes=(['x','y','z'] as const).map(axis=>{
-    const values=points.map(p=>p[axis]);
+    const values=uniform.map(p=>p[axis]);
     const filtered=bandpass(values,fs,.8,20);
     const rms=Math.sqrt(filtered.reduce((s,v)=>s+v*v,0)/filtered.length);
     return {axis,filtered,rms};
@@ -61,7 +81,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
       if(envelope[i]!>envelope[last]!)events[events.length-1]=i;
     }else events.push(i);
   }
-  const diffs=events.slice(1).map((v,i)=>(points[v]!.t-points[events[i]!]!.t));
+  const diffs=events.slice(1).map((v,i)=>((v-events[i]!)*nominalStep));
   const plausible=diffs.filter(v=>v>=350&&v<=1500);
   const shortIntervals=diffs.filter(v=>v<350).length;
   const longIntervals=diffs.filter(v=>v>1500).length;
@@ -87,6 +107,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     sampleRateHz:fs,candidateEvents:events.length,medianIntervalMs:plausible.length>=8?med:null,
     intervalVariationPercent:plausible.length>=8?variation:null,windowConsistency,artifactFraction,
     intervalCoveragePercent,rejectedIntervals:diffs.length-plausible.length,shortIntervals,longIntervals,
+    timingJitterMs,resampled:true,
     baselineRms:Math.sqrt(points.reduce((sum,p)=>sum+(p.x*p.x+p.y*p.y+p.z*p.z),0)/points.length),
     signalRms:chosen.rms,
     artifactWarning:intervalCoveragePercent!==null&&intervalCoveragePercent<85

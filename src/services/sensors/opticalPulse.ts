@@ -1,4 +1,4 @@
-export type PulseResult = { bpm: number | null; quality: 'usable' | 'insufficient'; sampleCount: number; durationSeconds: number; explanation: string; waveform: number[] };
+export type PulseResult = { bpm: number | null; quality: 'usable' | 'insufficient'; sampleCount: number; durationSeconds: number; explanation: string; waveform: number[]; signalScore?: number; stabilityBpm?: number };
 type Point = { t: number; value: number };
 
 export function estimateOpticalPulse(points: Point[]): PulseResult {
@@ -26,6 +26,9 @@ export function estimateOpticalPulse(points: Point[]): PulseResult {
     for(let j=Math.max(0,i-radius);j<=Math.min(values.length-1,i+radius);j++){sum+=values[j]!;count++;}
     return v-sum/count;
   });
+  const minValue=Math.min(...values), maxValue=Math.max(...values);
+  const averageLight=values.reduce((s,v)=>s+v,0)/values.length;
+  if(averageLight<20 || averageLight>250 || maxValue-minValue>90) return insufficient('Belysningen är för mörk, överexponerad eller varierar för mycket. Prova en jämn ljuskälla.');
   const rms = Math.sqrt(centered.reduce((s,x)=>s+x*x,0)/centered.length);
   if (rms < 0.15) return insufficient('Ingen tydlig optisk pulssignal. Prova mer ljus och håll fingret helt stilla.');
   const scores: { bpm: number; power: number }[] = [];
@@ -43,7 +46,24 @@ export function estimateOpticalPulse(points: Point[]): PulseResult {
   const strength=2*best.power/(totalPower || 1);
   const competing=scores.filter(s=>Math.abs(s.bpm-best.bpm)>12)[0];
   const separation=best.power/(competing?.power || 1e-9);
+  const windowBest = (part:number[]) => {
+    let winner={bpm:0,power:0};
+    for(let bpm=45;bpm<=180;bpm+=1){
+      let re=0,im=0;
+      for(let i=0;i<part.length;i++){
+        const angle=2*Math.PI*(bpm/60)*i/hz;
+        re+=part[i]!*Math.cos(angle);im+=part[i]!*Math.sin(angle);
+      }
+      const power=(re*re+im*im)/(part.length*part.length);
+      if(power>winner.power)winner={bpm,power};
+    }
+    return winner.bpm;
+  };
+  const mid=Math.floor(centered.length/2);
+  const firstBpm=windowBest(centered.slice(0,mid));
+  const secondBpm=windowBest(centered.slice(mid));
+  const stabilityBpm=Math.abs(firstBpm-secondBpm);
   const waveform=Array.from({length:60},(_,i)=>centered[Math.min(centered.length-1,Math.floor(i*centered.length/60))]!);
-  if(strength<0.18 || separation<1.5) return { ...insufficient('Signalen är för brusig eller otydlig för en pulsuppskattning. Försök igen med jämn belysning.'), waveform };
-  return { ...base, bpm:best.bpm, quality:'usable', waveform, explanation:'Experimentell uppskattning från ljusvariationer i kameran. Kontrollera mot en riktig pulsmätare. Inte medicinskt validerad.' };
+  if(strength<0.18 || separation<1.5 || stabilityBpm>8) return { ...insufficient('Signalen är för brusig eller otydlig för en pulsuppskattning. Försök igen med jämn belysning.'), waveform };
+  return { ...base, bpm:best.bpm, quality:'usable', waveform, signalScore:Number(strength.toFixed(2)), stabilityBpm, explanation:'Experimentell uppskattning från ljusvariationer i kameran. Kontrollera mot en riktig pulsmätare. Inte medicinskt validerad.' };
 }

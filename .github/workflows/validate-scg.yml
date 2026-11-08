@@ -1,6 +1,11 @@
 name: Validate SCG against PhysioNet CEBSDB
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/validate_cebs.py'
+      - '.github/workflows/validate-scg.yml'
 permissions:
   contents: read
 jobs:

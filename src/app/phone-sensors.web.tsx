@@ -24,6 +24,7 @@ export default function BrowserSensorLab() {
   const [mode, setMode] = useState<'sternum' | 'table'>('sternum');
   const [scg, setScg] = useState<ScgReport | null>(null);
   const [reference, setReference] = useState('');
+  const [measuredReference, setMeasuredReference] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [repeats, setRepeats] = useState<{sternum: RepeatEntry[]; table: RepeatEntry[]}>({sternum: [], table: []});
   const [controls, setControls] = useState<{sternum?: {motion: MotionReport; spectrum: SpectralReport | null}; table?: {motion: MotionReport; spectrum: SpectralReport | null}}>({});
@@ -43,7 +44,7 @@ export default function BrowserSensorLab() {
     setRunning(false);
     const result = analyzeMotion(readings.current);
     const spectralResult = analyzeMotionSpectrum(readings.current);
-    const scgResult = analyzeScg(readings.current);
+    const scgResult = measurementMode.current === 'sternum' ? analyzeScg(readings.current) : null;
     if (result) {
       setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
       setRepeats(previous => ({...previous, [measurementMode.current]: [...previous[measurementMode.current], {rms: result.variationRms, scg: scgResult}].slice(-5)}));
@@ -52,6 +53,7 @@ export default function BrowserSensorLab() {
     setCaptured([...readings.current]);
     setSpectrum(spectralResult);
     setScg(scgResult);
+    setMeasuredReference(reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null);
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
@@ -104,7 +106,7 @@ export default function BrowserSensorLab() {
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
       exploratorySpectrum: spectrum,
-      protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null},
+      protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: measuredReference},
       exploratoryScg: scg,
       pairedControl: controls,
       repeatedMeasurements: repeats,
@@ -128,6 +130,8 @@ export default function BrowserSensorLab() {
         <Text style={styles.body}>Välj mätprotokoll. För jämförelse: mät först på bröstbenet, sedan med samma telefon på ett stabilt bord.</Text>
         <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => setMode('sternum')} />
         <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => setMode('table')} />
+        <Text style={styles.body}>Om du har en separat pulsmätare, ange dess värde före start. Referensen sparas tillsammans med mätningen.</Text>
+        <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min (valfritt)" style={styles.input} />
         <Text style={styles.body}>Placera telefonen stilla mot bröstkorgen eller på ett stabilt underlag. Undvik att hålla den i handen. Mät i 30 sekunder med skärmen aktiv.</Text>
         <Text style={styles.status}>{status}</Text>
         {running ? <Text style={styles.timer}>{elapsed} / 30 sekunder</Text> : null}
@@ -163,11 +167,15 @@ export default function BrowserSensorLab() {
           <Text style={styles.body}>Bedömning: {scg.quality === 'candidate' ? 'Mekaniskt mönster identifierat – ej verifierat' : scg.quality === 'insufficient' ? 'Störd mätning' : 'Inget säkert återkommande mönster'}</Text>
           <Text style={styles.body}>{scg.explanation}</Text>
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>
+          <Text style={styles.body}>Intervall som uppfyllde algoritmens kriterier: {scg.intervalCoveragePercent === null ? 'Ej beräkningsbart' : `${scg.intervalCoveragePercent.toFixed(1)} %`} · Bortvalda: {scg.rejectedIntervals} (korta: {scg.shortIntervals}, långa: {scg.longIntervals})</Text>
+          <Text style={styles.body}>Filtrerad signal RMS: {scg.signalRms.toFixed(4)} m/s²</Text>
+          {scg.artifactWarning ? <Text style={styles.caption}>{scg.artifactWarning}</Text> : null}
           <Text style={styles.body}>Stabilitet mellan mätningens halvor: {scg.windowConsistency ? 'Liknande antal impulser' : 'Ej bekräftad'}</Text>
           <Text style={styles.caption}>Detta är ingen pulsmätning eller hjärtdiagnostik. Impulser kan komma från andning, kontakt eller sensorbrus.</Text>
           <Text style={styles.heading}>Samtidig referenspuls (valfritt)</Text>
-          <Text style={styles.body}>Ange uppmätt puls från separat mätare för dokumentation. SCG räknar inte fram puls.</Text>
-          <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min" style={styles.input} />
+          <Text style={styles.body}>Ange uppmätt puls från separat mätare före start för att koppla den till just den mätningen. SCG räknar inte fram puls.</Text>
+          <Text style={styles.body}>Referens registrerad vid mätningen: {measuredReference === null ? 'Saknas' : `${measuredReference} slag/min`}</Text>
+
         </Card> : null}
         {spectrum ? <Card>
           <Text style={styles.heading}>Frekvensanalys · experimentell</Text>

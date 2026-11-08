@@ -77,9 +77,9 @@ def run(name,cache):
     # NOT held-out accuracy. Include lag=0 to reveal calibration sensitivity.
     scores=[score(events,refs,float(lag)) for lag in np.arange(-.4,.401,.02)]
     best=max(scores,key=lambda v:v["f1"])
-    return {"record":name,"n_samples":len(segment),"fs_original":FS,"fs_phone_simulated":60,
+    # Split the 30-second window: fit lag on first 15 s only, then evaluate on last 15 s.\n    train_events=events[events<15]; train_refs=refs[refs<15]\n    test_events=events[events>=15]; test_refs=refs[refs>=15]\n    train_scores=[score(train_events,train_refs,float(lag)) for lag in np.arange(-.4,.401,.02)]\n    selected_lag=max(train_scores,key=lambda v:v["f1"])["lag_seconds"]\n    holdout=score(test_events,test_refs,selected_lag)\n    return {"record":name,"n_samples":len(segment),"fs_original":FS,"fs_phone_simulated":60,\n            "train_selected_lag_seconds":selected_lag,"holdout_last_15_seconds":holdout,
             "zero_lag":score(events,refs,0),"best_lag_in_sample":best,
-            "limitations":["In-sample lag optimization is optimistic","ECG peaks are automatically derived, not expert-reviewed",
+            "limitations":["Lag selected on first 15 seconds and evaluated on second 15 seconds; same subject and recording","ECG peaks are automatically derived, not expert-reviewed",
               "Different sensor, placement, calibration and hardware from iPhone",
               "Amplitude normalized artificially; phone noise and timing jitter not reproduced",
               "No cardiac diagnosis or verified smartphone heart rate"]}
@@ -94,7 +94,7 @@ def main():
     for name in args.records:
         if not name.startswith("b") or len(name)!=4 or not name[1:].isdigit():raise ValueError("Only CEBS baseline bNNN records")
         results.append(run(name,Path(args.cache)))
-    result={"dataset":"PhysioNet CEBSDB 1.0.0","method":"exploratory baseline; no independent validation",
+    result={"dataset":"PhysioNet CEBSDB 1.0.0","method":"exploratory within-record temporal holdout; no independent subject-level validation",
             "results":results}
     Path(args.output).write_text(json.dumps(result,indent=2),encoding="utf-8")
     print(json.dumps(result,indent=2))

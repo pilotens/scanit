@@ -11,6 +11,13 @@ export type ScgReport = {
   artifactFraction: number;
   axis: 'x' | 'y' | 'z' | null;
   filteredWaveform: number[];
+  intervalCoveragePercent: number | null;
+  rejectedIntervals: number;
+  shortIntervals: number;
+  longIntervals: number;
+  baselineRms: number;
+  signalRms: number;
+  artifactWarning: string | null;
 };
 
 function median(v:number[]):number {
@@ -56,6 +63,9 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   }
   const diffs=events.slice(1).map((v,i)=>(points[v]!.t-points[events[i]!]!.t));
   const plausible=diffs.filter(v=>v>=350&&v<=1500);
+  const shortIntervals=diffs.filter(v=>v<350).length;
+  const longIntervals=diffs.filter(v=>v>1500).length;
+  const intervalCoveragePercent=diffs.length?100*plausible.length/diffs.length:null;
   const med=median(plausible);
   const mad=median(plausible.map(v=>Math.abs(v-med)));
   const variation=med>0?100*mad/med:null;
@@ -64,7 +74,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   const right=events.filter(v=>v>=half).length;
   const windowConsistency=left>=5&&right>=5&&Math.abs(left-right)/Math.max(left,right)<.3;
   const artifactFraction=envelope.filter(v=>v>Math.max(.3,threshold*6)).length/envelope.length;
-  const candidate=events.length>=15 && plausible.length>=events.length*.7 &&
+  const candidate=events.length>=15 && plausible.length>=events.length*.85 &&
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
   return {
@@ -76,6 +86,12 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
       : 'Mekaniska impulser kunde inte identifieras konsekvent. Ingen fysiologisk rytm kan rapporteras.',
     sampleRateHz:fs,candidateEvents:events.length,medianIntervalMs:plausible.length>=8?med:null,
     intervalVariationPercent:plausible.length>=8?variation:null,windowConsistency,artifactFraction,
+    intervalCoveragePercent,rejectedIntervals:diffs.length-plausible.length,shortIntervals,longIntervals,
+    baselineRms:Math.sqrt(points.reduce((sum,p)=>sum+(p.x*p.x+p.y*p.y+p.z*p.z),0)/points.length),
+    signalRms:chosen.rms,
+    artifactWarning:intervalCoveragePercent!==null&&intervalCoveragePercent<85
+      ? 'Många kandidatintervall föll utanför analysintervallet. Rapporterad intervallvariation kan därför underskatta den verkliga spridningen.'
+      : null,
     axis:chosen.axis,
     filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
   };

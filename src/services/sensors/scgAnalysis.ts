@@ -24,6 +24,7 @@ export type ScgReport = {
   templateEventCount: number;
   templateConsistency: number | null;
   signalOrigin: 'unverified_mechanical';
+  harmonicCheck: {candidateHz:number|null; halfFrequencyHz:number|null; alternatingSimilarity:number|null; sameParitySimilarity:number|null; lagOneCorrelation:number|null; lagTwoCorrelation:number|null; interpretation:string};
 };
 
 function median(v:number[]):number {
@@ -123,6 +124,29 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     }).filter((v):v is number=>v!==null);
     return scores.length>=8?median(scores):null;
   })():null;
+  // Test a possible alternating A-B pattern without assigning cardiac origin.
+  // Correlations use full snippets on the same selected axis, not spectrum peaks
+  // selected independently across x/y/z.
+  const correlation=(a:number[],b:number[]):number|null=>{
+    if(a.length!==b.length||!a.length)return null;
+    const am=a.reduce((v,x)=>v+x,0)/a.length,bm=b.reduce((v,x)=>v+x,0)/b.length;
+    let dot=0,aa=0,bb=0;
+    for(let i=0;i<a.length;i++){const x=a[i]!-am,y=b[i]!-bm;dot+=x*y;aa+=x*x;bb+=y*y;}
+    return aa>1e-12&&bb>1e-12?dot/Math.sqrt(aa*bb):null;
+  };
+  const adjacent=snippets.slice(1).map((v,i)=>correlation(snippets[i]!,v)).filter((v):v is number=>v!==null);
+  const everyOther=snippets.slice(2).map((v,i)=>correlation(snippets[i]!,v)).filter((v):v is number=>v!==null);
+  const lagOneCorrelation=adjacent.length>=8?median(adjacent):null;
+  const lagTwoCorrelation=everyOther.length>=8?median(everyOther):null;
+  const alternatingSimilarity=lagOneCorrelation;
+  const sameParitySimilarity=lagTwoCorrelation;
+  const candidateHz=plausible.length>=8&&med>0?1000/med:null;
+  const halfFrequencyHz=candidateHz===null?null:candidateHz/2;
+  const interpretation=lagOneCorrelation===null||lagTwoCorrelation===null
+    ? 'Otillräckligt med jämförbara impulser för att testa växlande signalformer.'
+    : lagTwoCorrelation-lagOneCorrelation>.2
+    ? 'Varannan impulskandidat liknar varandra mer än intilliggande kandidater. Möjligt A-B-mönster; inte bekräftad harmonisk relation.'
+    : 'Inget tydligt A-B-mönster i signalformen. En eventuell 2:1-relation kräver separat spektral verifiering på samma axel.';
   const candidate=events.length>=15 && plausible.length>=events.length*.85 &&
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
@@ -143,6 +167,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
       ? 'Många kandidatintervall föll utanför analysintervallet. Rapporterad intervallvariation kan därför underskatta den verkliga spridningen.'
       : null,
     eventTemplate,templateEventCount:snippets.length,templateConsistency,signalOrigin:'unverified_mechanical',
+    harmonicCheck:{candidateHz,halfFrequencyHz,alternatingSimilarity,sameParitySimilarity,lagOneCorrelation,lagTwoCorrelation,interpretation},
     axis:chosen.axis,
     filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
   };

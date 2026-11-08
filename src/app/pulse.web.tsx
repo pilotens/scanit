@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet, TextInput } from 'react-native';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
@@ -11,11 +11,24 @@ export default function OpticalPulseScreen() {
   const [status,setStatus]=useState('Redo');
   const [seconds,setSeconds]=useState(0);
   const [result,setResult]=useState<PulseResult|null>(null);
+  const [reference,setReference]=useState('');
+  const [copyStatus,setCopyStatus]=useState('');
   const stopRef=useRef<()=>void>(()=>{});
   const running=useRef(false);
   const cleanup=useRef<()=>void>(()=>{});
   useEffect(()=>()=>{cleanup.current();},[]);
   const stop=()=>{stopRef.current();};
+  const copyReport=async()=>{
+    if(!result)return;
+    const referenceBpm=Number(reference);
+    const validReference=reference.trim()!=='' && Number.isFinite(referenceBpm) && referenceBpm>=35 && referenceBpm<=220;
+    const data={source:'ScanIt experimental camera PPG',date:new Date().toISOString(),result,
+      referenceBpm:validReference?referenceBpm:null,
+      absoluteErrorBpm:validReference && result.bpm!==null?Math.abs(referenceBpm-result.bpm):null,
+      note:'Experimental and not clinically validated. No ECG or diagnostic interpretation.'};
+    try{await navigator.clipboard.writeText(JSON.stringify(data));setCopyStatus('Rapport kopierad.');}
+    catch{setCopyStatus('Safari tillät inte kopiering.');}
+  };
   const start=async()=>{
     if(running.current)return;
     setResult(null);
@@ -78,6 +91,13 @@ export default function OpticalPulseScreen() {
       <Text style={styles.body}>{result.explanation}</Text>
       <Text style={styles.body}>Insamling: {result.durationSeconds.toFixed(1)} sekunder, {result.sampleCount} kameramätningar.</Text>
       <Text style={styles.body}>Detta är ett experimentellt test, inte en medicinsk mätning eller ett EKG.</Text>
+      {result.signalScore!==undefined?<Text style={styles.body}>Signalens spektrala styrka: {result.signalScore.toFixed(2)} · variation mellan två tidsfönster: {result.stabilityBpm} slag/min.</Text>:null}
+      <Text style={styles.heading}>Jämför med referensmätare</Text>
+      <Text style={styles.body}>Ange samtidig puls från en riktig pulsmätare. Detta sparas inte automatiskt.</Text>
+      <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls i slag/min" style={styles.input}/>
+      {reference.trim()!=='' && result.bpm!==null && Number(reference)>=35 && Number(reference)<=220?<Text style={styles.body}>Absolut skillnad: {Math.abs(Number(reference)-result.bpm)} slag/min.</Text>:null}
+      <AppButton label="Kopiera pulsrapport till AI" onPress={copyReport}/>
+      {copyStatus?<Text style={styles.status}>{copyStatus}</Text>:null}
     </Card>:null}
     <AppButton label="Mät rörelse med accelerometern" secondary onPress={()=>router.push('/phone-sensors')}/>
   </Screen>;
@@ -87,4 +107,5 @@ const styles=StyleSheet.create({
  body:{fontSize:14,lineHeight:21,color:colors.inkMuted},
  status:{fontSize:15,fontWeight:'700',color:colors.primary},
  value:{fontSize:27,fontWeight:'800',color:colors.primary},
+ input:{borderWidth:1,borderColor:'#a4b5bb',borderRadius:8,padding:12,color:colors.ink,fontSize:16},
 });

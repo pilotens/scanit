@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install numpy scipy
       - name: Compare SCG candidates against ECG reference
-        run: python scripts/validate_cebs.py --records b001 b002 b003 --output cebs-validation-results.json
+        run: python scripts/validate_cebs.py --records b001 b002 b003 b004 b005 b006 b007 b008 b009 b010 --output cebs-validation-results.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

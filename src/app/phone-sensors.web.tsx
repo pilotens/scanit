@@ -13,6 +13,8 @@ import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/s
 
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
 const DURATION_MS = 30000;
+const HISTORY_KEY = 'scanit-personal-signal-history-v1';
+type PersonalEntry = {timestamp: string; mode: 'sternum' | 'table'; rms: number; scg: ScgReport | null; referenceBpm: number | null; note: string};
 
 export default function BrowserSensorLab() {
   const [status, setStatus] = useState('Redo för mätning');
@@ -24,6 +26,9 @@ export default function BrowserSensorLab() {
   const [mode, setMode] = useState<'sternum' | 'table'>('sternum');
   const [scg, setScg] = useState<ScgReport | null>(null);
   const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [history, setHistory] = useState<PersonalEntry[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [measuredReference, setMeasuredReference] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [repeats, setRepeats] = useState<{sternum: RepeatEntry[]; table: RepeatEntry[]}>({sternum: [], table: []});
@@ -35,6 +40,27 @@ export default function BrowserSensorLab() {
   const stopRef = useRef<() => void>(() => {});
 
   useEffect(() => () => { active.current = false; cleanup.current?.(); }, []);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(HISTORY_KEY);
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const safe = parsed.filter((v): v is PersonalEntry =>
+            v !== null && typeof v === 'object' && typeof v.timestamp === 'string' &&
+            (v.mode === 'sternum' || v.mode === 'table') &&
+            typeof v.rms === 'number' && Number.isFinite(v.rms));
+          setHistory(safe.slice(-100));
+        }
+      }
+    } catch { setStatus('Kunde inte läsa lokal historik; nya mätningar kan fortfarande göras.'); }
+    setHistoryLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!historyLoaded) return;
+    try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-100))); }
+    catch { setStatus('Lokal lagring är otillgänglig. Exportera resultaten för att behålla dem.'); }
+  }, [history, historyLoaded]);
 
   const stop = () => {
     if (!active.current) return;
@@ -46,6 +72,8 @@ export default function BrowserSensorLab() {
     const spectralResult = analyzeMotionSpectrum(readings.current);
     const scgResult = measurementMode.current === 'sternum' ? analyzeScg(readings.current) : null;
     if (result) {
+      const validRef = reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null;
+      setHistory(previous => [...previous, {timestamp: new Date().toISOString(), mode: measurementMode.current, rms: result.variationRms, scg: scgResult, referenceBpm: validRef, note: note.slice(0,160)}].slice(-100));
       setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
       setRepeats(previous => ({...previous, [measurementMode.current]: [...previous[measurementMode.current], {rms: result.variationRms, scg: scgResult}].slice(-5)}));
     }
@@ -110,6 +138,7 @@ export default function BrowserSensorLab() {
       exploratoryScg: scg,
       pairedControl: controls,
       repeatedMeasurements: repeats,
+      personalHistory: history,
       repeatability: summarizeRepeats(repeats[measurementMode.current]),
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
@@ -128,8 +157,10 @@ export default function BrowserSensorLab() {
       <Card>
         <Text style={styles.heading}>SCG · mekaniska vibrationer</Text>
         <Text style={styles.body}>Välj mätprotokoll. För jämförelse: mät först på bröstbenet, sedan med samma telefon på ett stabilt bord.</Text>
-        <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => setMode('sternum')} />
-        <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => setMode('table')} />
+        <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => {if (!running) setMode('sternum');}} />
+        <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => {if (!running) setMode('table');}} />
+        <Text style={styles.body}>Personligt protokoll: ligg på rygg i samma position, använd samma telefon och orientering, och låt den vila mot samma punkt på bröstbenet. Gör tre bröstmätningar i följd och en bordskontroll. Flytta inte telefonen under en mätning.</Text>
+        <TextInput value={note} onChangeText={setNote} placeholder="Anteckning, t.ex. placering eller rörelse (valfritt)" style={styles.input} />
         <Text style={styles.body}>Om du har en separat pulsmätare, ange dess värde före start. Referensen sparas tillsammans med mätningen.</Text>
         <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min (valfritt)" style={styles.input} />
         <Text style={styles.body}>Placera telefonen stilla mot bröstkorgen eller på ett stabilt underlag. Undvik att hålla den i handen. Mät i 30 sekunder med skärmen aktiv.</Text>
@@ -138,6 +169,13 @@ export default function BrowserSensorLab() {
         {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : <AppButton label="Starta verklig mätning" onPress={start} />}
       </Card>
 
+      <Card>
+        <Text style={styles.heading}>Min personliga mäthistorik</Text>
+        <Text style={styles.body}>{history.length} sparade mätningar på den här enheten (max 100). Ingen automatisk uppladdning.</Text>
+        {history.slice(-8).reverse().map((item,i) => <Text key={item.timestamp+i} style={styles.body}>{new Date(item.timestamp).toLocaleString('sv-SE')} · {item.mode === 'sternum' ? 'Bröstben' : 'Bord'} · RMS {item.rms.toFixed(4)} m/s² · {item.scg?.quality === 'candidate' ? 'Mekaniskt mönster' : 'Ej verifierat mönster'}{item.note ? ' · '+item.note : ''}</Text>)}
+        <Text style={styles.caption}>Historiken ligger lokalt i webbläsaren och kan försvinna om webbplatsens data rensas. Exportera JSON efter viktiga mätningar. Resultaten visar inte hjärthälsa.</Text>
+        <AppButton label="Radera lokal mäthistorik" secondary onPress={() => setHistory([])} />
+      </Card>
       <Card>
         <Text style={styles.heading}>Upprepbarhet · senaste fem mätningarna</Text>
         <Text style={styles.body}>Bröstben: {repeats.sternum.length}/5 mätningar · Bord: {repeats.table.length}/5 mätningar</Text>
@@ -164,7 +202,7 @@ export default function BrowserSensorLab() {
       </Card> : <Card muted><Text style={styles.heading}>Kontrollprotokoll</Text><Text style={styles.body}>Genomför en 30-sekundersmätning på bröstbenet i ryggläge och en på ett stabilt bord. Appen jämför automatiskt resultaten när båda finns.</Text><Text style={styles.body}>Bröstkorg: {controls.sternum ? 'klar' : 'saknas'} · Bord: {controls.table ? 'klar' : 'saknas'}</Text></Card>}
       {report ? <>
         {scg ? <Card>
-          <Text style={styles.heading}>SCG-analys · {mode === 'sternum' ? 'Bröstben, ryggläge' : 'Bordskontroll'}</Text>
+          <Text style={styles.heading}>SCG-analys · {measurementMode.current === 'sternum' ? 'Bröstben, ryggläge' : 'Bordskontroll'}</Text>
           <Text style={styles.body}>Bedömning: {scg.quality === 'candidate' ? 'Mekaniskt mönster identifierat – ej verifierat' : scg.quality === 'insufficient' ? 'Störd mätning' : 'Inget säkert återkommande mönster'}</Text>
           <Text style={styles.body}>{scg.explanation}</Text>
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>

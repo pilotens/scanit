@@ -169,6 +169,7 @@ export default function BrowserSensorLab() {
           <Text style={styles.body}>{scg.explanation}</Text>
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>
           <Text style={styles.body}>Intervall som uppfyllde algoritmens kriterier: {scg.intervalCoveragePercent === null ? 'Ej beräkningsbart' : `${scg.intervalCoveragePercent.toFixed(1)} %`} · Bortvalda: {scg.rejectedIntervals} (korta: {scg.shortIntervals}, långa: {scg.longIntervals})</Text>
+          <Text style={styles.body}>Signalformens samstämmighet inom mätningen: {scg.templateConsistency === null ? 'Kan inte bedömas' : scg.templateConsistency.toFixed(2)} (korrelation −1 till +1; ej medicinskt validerad)</Text>
           <Text style={styles.body}>Mekanisk mall: {scg.eventTemplate ? `${scg.templateEventCount} justerade impulskandidater` : 'Otillräckligt underlag'}</Text>
           <Text style={styles.body}>Filtrerad signal RMS: {scg.signalRms.toFixed(4)} m/s²</Text>
           <Text style={styles.body}>Tidsjitter (medianavvikelse): {scg.timingJitterMs.toFixed(2)} ms · {scg.resampled ? 'Interpolerad till jämna tidssteg' : 'Ej interpolerad'}</Text>

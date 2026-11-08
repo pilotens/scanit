@@ -5,6 +5,7 @@ import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
 import { colors } from '@/constants/theme';
+import { MotionWaveform } from '@/components/MotionWaveform.web';
 import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/sensors/motionAnalysis';
 
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
@@ -15,6 +16,8 @@ export default function BrowserSensorLab() {
   const [report, setReport] = useState<MotionReport | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [captured, setCaptured] = useState<MotionPoint[]>([]);
+  const [copyStatus, setCopyStatus] = useState('');
   const readings = useRef<MotionPoint[]>([]);
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
@@ -30,6 +33,7 @@ export default function BrowserSensorLab() {
     setRunning(false);
     const result = analyzeMotion(readings.current);
     setReport(result);
+    setCaptured([...readings.current]);
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
@@ -37,6 +41,8 @@ export default function BrowserSensorLab() {
   const start = async () => {
     if (active.current) return;
     setReport(null);
+    setCaptured([]);
+    setCopyStatus('');
     setElapsed(0);
     readings.current = [];
     try {
@@ -69,6 +75,25 @@ export default function BrowserSensorLab() {
     }
   };
 
+  const copyForAI = async () => {
+    if (!report || captured.length === 0) return;
+    const payload = {
+      source: 'ScanIt iPhone browser accelerometer', timestamp: new Date().toISOString(),
+      measurement: 'accelerationIncludingGravity', units: 'm/s²',
+      caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
+      summary: report,
+      samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
+      columns: ['elapsed_ms','ax','ay','az'],
+      analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och eventuella återkommande mönster. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      setCopyStatus('Mätdata kopierade. Klistra in i valfri AI-chatt.');
+    } catch {
+      setCopyStatus('Kopiering blockerades av Safari. Kontrollera urklippsbehörighet.');
+    }
+  };
+
   return (
     <Screen title="ScanIt · Rörelse" subtitle="Riktig iPhone-mätning utan extern utrustning">
       <Card>
@@ -85,6 +110,8 @@ export default function BrowserSensorLab() {
           <Text style={styles.resultTitle}>{report.qualityText}</Text>
           <Text style={styles.body}>{report.interpretation}</Text>
           <Text style={styles.heading}>Rörelser under mätningen</Text>
+          <MotionWaveform samples={captured} />
+          <Text style={styles.heading}>Översikt över rörelseintensitet</Text>
           <View style={styles.chart} accessibilityLabel="Diagram över uppmätt rörelsevariation under 30 sekunder">
             {report.segments.map((value, index) => {
               const max = Math.max(0.05, ...report.segments);
@@ -98,6 +125,12 @@ export default function BrowserSensorLab() {
           <Text style={styles.body}>Telefonen registrerade verkliga rörelser i {report.durationSeconds.toFixed(1)} sekunder. Vi har ännu inte identifierat någon fysiologisk signal med tillräcklig säkerhet för att visa puls eller andningsfrekvens.</Text>
           <Text style={styles.heading}>För bättre mätning</Text>
           <Text style={styles.body}>Använd samma placering varje gång, låt telefonen vila helt och undvik rörelse omkring den. Upprepa gärna mätningen och jämför kurvornas form.</Text>
+        </Card>
+        <Card>
+          <Text style={styles.heading}>Dela mätningen för AI-analys</Text>
+          <Text style={styles.body}>Kopiera hela accelerometerserien, tidsstämplar och kvalitetsanalys i JSON-format. Ingen data skickas automatiskt.</Text>
+          <AppButton label="Kopiera mätdata till AI" onPress={copyForAI} />
+          {copyStatus ? <Text style={styles.status}>{copyStatus}</Text> : null}
         </Card>
         <Card muted>
           <Text style={styles.heading}>Tekniska detaljer</Text>

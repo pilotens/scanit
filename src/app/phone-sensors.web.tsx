@@ -199,6 +199,7 @@ export default function BrowserSensorLab() {
       exploratorySpectrum: spectrum,
       protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? (measurementPosture === 'reclined45' ? 'Reclined approximately 45 degrees, iPhone on sternum' : 'Supine, iPhone on sternum') : 'Phone resting on a stable table', referenceBpm: measuredReference, capturedDurationSeconds: captureSeconds, completeCapture: captureSeconds >= 29},
       exploratoryScg: scg,
+      harmonicChecks: scg?.harmonicChecks ?? null,
       pairedControl: controls,
       repeatedMeasurements: repeats,
       personalHistory: history,

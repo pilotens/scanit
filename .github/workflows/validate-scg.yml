@@ -1,0 +1,23 @@
+name: Validate SCG against PhysioNet CEBSDB
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install numpy scipy
+      - name: Compare SCG candidates against ECG reference
+        run: python scripts/validate_cebs.py --records b001 b002 b003 --output cebs-validation-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cebs-validation-results
+          path: cebs-validation-results.json
+          if-no-files-found: warn

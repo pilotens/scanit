@@ -22,6 +22,8 @@ export type ScgReport = {
   resampled: boolean;
   eventTemplate: number[] | null;
   templateEventCount: number;
+  templateConsistency: number | null;
+  signalOrigin: 'unverified_mechanical';
 };
 
 function median(v:number[]):number {
@@ -106,6 +108,21 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     });
   });
   const eventTemplate=snippets.length>=8?offsets.map((_,i)=>Number(median(snippets.map(row=>row[i]!)).toFixed(5))):null;
+  // A median template alone can conceal disagreement among events.
+  // Score individual centered snippets against the median morphology.
+  const templateConsistency=eventTemplate&&snippets.length>=8?(()=>{
+    const centered=(v:number[])=>{const avg=v.reduce((a,b)=>a+b,0)/v.length;return v.map(x=>x-avg);};
+    const template=centered(eventTemplate);
+    const templateEnergy=Math.sqrt(template.reduce((sum,v)=>sum+v*v,0));
+    if(templateEnergy<1e-8)return null;
+    const scores=snippets.map(row=>{
+      const centeredRow=centered(row);
+      const energy=Math.sqrt(centeredRow.reduce((sum,v)=>sum+v*v,0));
+      if(energy<1e-8)return null;
+      return centeredRow.reduce((sum,v,i)=>sum+v*template[i]!,0)/(energy*templateEnergy);
+    }).filter((v):v is number=>v!==null);
+    return scores.length>=8?median(scores):null;
+  })():null;
   const candidate=events.length>=15 && plausible.length>=events.length*.85 &&
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
@@ -125,7 +142,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     artifactWarning:intervalCoveragePercent!==null&&intervalCoveragePercent<85
       ? 'Många kandidatintervall föll utanför analysintervallet. Rapporterad intervallvariation kan därför underskatta den verkliga spridningen.'
       : null,
-    eventTemplate,templateEventCount:snippets.length,
+    eventTemplate,templateEventCount:snippets.length,templateConsistency,signalOrigin:'unverified_mechanical',
     axis:chosen.axis,
     filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
   };

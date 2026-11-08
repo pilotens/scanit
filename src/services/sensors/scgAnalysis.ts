@@ -20,6 +20,8 @@ export type ScgReport = {
   artifactWarning: string | null;
   timingJitterMs: number;
   resampled: boolean;
+  eventTemplate: number[] | null;
+  templateEventCount: number;
 };
 
 function median(v:number[]):number {
@@ -94,6 +96,16 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   const right=events.filter(v=>v>=half).length;
   const windowConsistency=left>=5&&right>=5&&Math.abs(left-right)/Math.max(left,right)<.3;
   const artifactFraction=envelope.filter(v=>v>Math.max(.3,threshold*6)).length/envelope.length;
+  // Median waveform aligned to detected mechanical impulse candidates.
+  // 150 ms before and 350 ms after each event, sampled at 60 Hz.
+  const offsets=Array.from({length:31},(_,i)=>(i-9)/60);
+  const snippets=events.filter(index=>index>=Math.ceil(fs*.15)&&index+Math.ceil(fs*.35)<signal.length).map(index=>{
+    return offsets.map(offset=>{
+      const at=index+offset*fs, lo=Math.floor(at),hi=Math.min(signal.length-1,lo+1);
+      return signal[lo]!+(signal[hi]!-signal[lo]!)*(at-lo);
+    });
+  });
+  const eventTemplate=snippets.length>=8?offsets.map((_,i)=>Number(median(snippets.map(row=>row[i]!)).toFixed(5))):null;
   const candidate=events.length>=15 && plausible.length>=events.length*.85 &&
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
@@ -113,6 +125,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     artifactWarning:intervalCoveragePercent!==null&&intervalCoveragePercent<85
       ? 'Många kandidatintervall föll utanför analysintervallet. Rapporterad intervallvariation kan därför underskatta den verkliga spridningen.'
       : null,
+    eventTemplate,templateEventCount:snippets.length,
     axis:chosen.axis,
     filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
   };

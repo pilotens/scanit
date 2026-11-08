@@ -24,6 +24,8 @@ export default function BrowserSensorLab() {
   const [scg, setScg] = useState<ScgReport | null>(null);
   const [reference, setReference] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
+  const [controls, setControls] = useState<{sternum?: {motion: MotionReport; spectrum: SpectralReport | null}; table?: {motion: MotionReport; spectrum: SpectralReport | null}}>({});
+  const measurementMode = useRef<'sternum' | 'table'>('sternum');
   const readings = useRef<MotionPoint[]>([]);
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
@@ -38,9 +40,11 @@ export default function BrowserSensorLab() {
     cleanup.current = null;
     setRunning(false);
     const result = analyzeMotion(readings.current);
+    const spectralResult = analyzeMotionSpectrum(readings.current);
+    if (result) setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
     setReport(result);
     setCaptured([...readings.current]);
-    setSpectrum(analyzeMotionSpectrum(readings.current));
+    setSpectrum(spectralResult);
     setScg(analyzeScg(readings.current));
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
@@ -55,6 +59,7 @@ export default function BrowserSensorLab() {
     setCopyStatus('');
     setElapsed(0);
     readings.current = [];
+    measurementMode.current = mode;
     try {
       if (!('DeviceMotionEvent' in window)) throw new Error('Rörelsesensor saknas i den här webbläsaren.');
       const motion = DeviceMotionEvent as PermissionMotionEvent;
@@ -93,8 +98,9 @@ export default function BrowserSensorLab() {
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
       exploratorySpectrum: spectrum,
-      protocol: {mode, position: mode === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null},
+      protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null},
       exploratoryScg: scg,
+      pairedControl: controls,
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
       analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och eventuella återkommande mönster. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
@@ -120,6 +126,15 @@ export default function BrowserSensorLab() {
         {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : <AppButton label="Starta verklig mätning" onPress={start} />}
       </Card>
 
+      {controls.sternum && controls.table ? <Card>
+        <Text style={styles.heading}>Bröstkorg kontra bord · kontrollanalys</Text>
+        <Text style={styles.body}>Bröstkorg: {controls.sternum.motion.variationRms.toFixed(4)} m/s² RMS</Text>
+        <Text style={styles.body}>Bord: {controls.table.motion.variationRms.toFixed(4)} m/s² RMS</Text>
+        <Text style={styles.resultTitle}>{(controls.sternum.motion.variationRms / Math.max(0.000001, controls.table.motion.variationRms)).toFixed(1)}× rörelsevariation</Text>
+        <Text style={styles.body}>Periodiskt band (0,7–3 Hz): {(() => { const a=controls.sternum?.spectrum?.bands.find(b=>b.fromHz===0.7); const b=controls.table?.spectrum?.bands.find(b=>b.fromHz===0.7); return a && b && b.strength>0 ? `${(a.strength/b.strength).toFixed(1)}× högre spektral styrka på bröstkorgen` : 'Ej jämförbart'; })()}</Text>
+        <Text style={styles.caption}>Jämförelsen visar signal över bakgrundsnivå, inte att signalen kommer från hjärtat. Samma telefon, orientering och miljö bör användas. Referens-EKG eller PPG behövs för att verifiera hjärtkoppling.</Text>
+        <AppButton label="Nollställ jämförelsen" secondary onPress={() => setControls({})} />
+      </Card> : <Card muted><Text style={styles.heading}>Kontrollprotokoll</Text><Text style={styles.body}>Genomför en 30-sekundersmätning på bröstbenet i ryggläge och en på ett stabilt bord. Appen jämför automatiskt resultaten när båda finns.</Text><Text style={styles.body}>Bröstkorg: {controls.sternum ? 'klar' : 'saknas'} · Bord: {controls.table ? 'klar' : 'saknas'}</Text></Card>}
       {report ? <>
         {scg ? <Card>
           <Text style={styles.heading}>SCG-analys · {mode === 'sternum' ? 'Bröstben, ryggläge' : 'Bordskontroll'}</Text>

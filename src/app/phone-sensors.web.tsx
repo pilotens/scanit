@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
 import { colors } from '@/constants/theme';
 import { MotionWaveform } from '@/components/MotionWaveform.web';
+import { analyzeScg, type ScgReport } from '@/services/sensors/scgAnalysis';
 import { analyzeMotionSpectrum, type SpectralReport } from '@/services/sensors/motionSpectrum';
 import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/sensors/motionAnalysis';
 
@@ -19,6 +20,9 @@ export default function BrowserSensorLab() {
   const [elapsed, setElapsed] = useState(0);
   const [captured, setCaptured] = useState<MotionPoint[]>([]);
   const [spectrum, setSpectrum] = useState<SpectralReport | null>(null);
+  const [mode, setMode] = useState<'sternum' | 'table'>('sternum');
+  const [scg, setScg] = useState<ScgReport | null>(null);
+  const [reference, setReference] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const readings = useRef<MotionPoint[]>([]);
   const cleanup = useRef<(() => void) | null>(null);
@@ -37,6 +41,7 @@ export default function BrowserSensorLab() {
     setReport(result);
     setCaptured([...readings.current]);
     setSpectrum(analyzeMotionSpectrum(readings.current));
+    setScg(analyzeScg(readings.current));
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
@@ -46,6 +51,7 @@ export default function BrowserSensorLab() {
     setReport(null);
     setCaptured([]);
     setSpectrum(null);
+    setScg(null);
     setCopyStatus('');
     setElapsed(0);
     readings.current = [];
@@ -87,6 +93,8 @@ export default function BrowserSensorLab() {
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
       exploratorySpectrum: spectrum,
+      protocol: {mode, position: mode === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null},
+      exploratoryScg: scg,
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
       analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och eventuella återkommande mönster. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
@@ -102,7 +110,10 @@ export default function BrowserSensorLab() {
   return (
     <Screen title="ScanIt · Rörelse" subtitle="Riktig iPhone-mätning utan extern utrustning">
       <Card>
-        <Text style={styles.heading}>Mät små rörelser med telefonen</Text>
+        <Text style={styles.heading}>SCG · mekaniska vibrationer</Text>
+        <Text style={styles.body}>Välj mätprotokoll. För jämförelse: mät först på bröstbenet, sedan med samma telefon på ett stabilt bord.</Text>
+        <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => setMode('sternum')} />
+        <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => setMode('table')} />
         <Text style={styles.body}>Placera telefonen stilla mot bröstkorgen eller på ett stabilt underlag. Undvik att hålla den i handen. Mät i 30 sekunder med skärmen aktiv.</Text>
         <Text style={styles.status}>{status}</Text>
         {running ? <Text style={styles.timer}>{elapsed} / 30 sekunder</Text> : null}
@@ -110,6 +121,17 @@ export default function BrowserSensorLab() {
       </Card>
 
       {report ? <>
+        {scg ? <Card>
+          <Text style={styles.heading}>SCG-analys · {mode === 'sternum' ? 'Bröstben, ryggläge' : 'Bordskontroll'}</Text>
+          <Text style={styles.body}>Bedömning: {scg.quality === 'candidate' ? 'Mekaniskt mönster identifierat – ej verifierat' : scg.quality === 'insufficient' ? 'Störd mätning' : 'Inget säkert återkommande mönster'}</Text>
+          <Text style={styles.body}>{scg.explanation}</Text>
+          <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>
+          <Text style={styles.body}>Stabilitet mellan mätningens halvor: {scg.windowConsistency ? 'Liknande antal impulser' : 'Ej bekräftad'}</Text>
+          <Text style={styles.caption}>Detta är ingen pulsmätning eller hjärtdiagnostik. Impulser kan komma från andning, kontakt eller sensorbrus.</Text>
+          <Text style={styles.heading}>Samtidig referenspuls (valfritt)</Text>
+          <Text style={styles.body}>Ange uppmätt puls från separat mätare för dokumentation. SCG räknar inte fram puls.</Text>
+          <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min" style={styles.input} />
+        </Card> : null}
         {spectrum ? <Card>
           <Text style={styles.heading}>Frekvensanalys · experimentell</Text>
           {spectrum.bands.map(b => <Text key={b.name} style={styles.body}>{b.name} ({b.fromHz}–{b.toHz} Hz): starkaste komponent {b.peakHz === null ? 'ej identifierad' : `${b.peakHz.toFixed(2)} Hz`}</Text>)}
@@ -165,5 +187,6 @@ const styles = StyleSheet.create({
   resultTitle: { color: colors.ink, fontSize: 26, fontWeight: '800' },
   chart: { height: 110, flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingVertical: 8 },
   bar: { flex: 1, backgroundColor: colors.primary, borderRadius: 2 },
+  input: { borderWidth: 1, borderColor: '#a4b5bb', borderRadius: 8, padding: 12, fontSize: 16, color: colors.ink },
   caption: { color: colors.inkMuted, fontSize: 12, lineHeight: 18 },
 });

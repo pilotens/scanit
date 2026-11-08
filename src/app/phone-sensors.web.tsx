@@ -169,6 +169,7 @@ export default function BrowserSensorLab() {
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>
           <Text style={styles.body}>Intervall som uppfyllde algoritmens kriterier: {scg.intervalCoveragePercent === null ? 'Ej beräkningsbart' : `${scg.intervalCoveragePercent.toFixed(1)} %`} · Bortvalda: {scg.rejectedIntervals} (korta: {scg.shortIntervals}, långa: {scg.longIntervals})</Text>
           <Text style={styles.body}>Filtrerad signal RMS: {scg.signalRms.toFixed(4)} m/s²</Text>
+          <Text style={styles.body}>Tidsjitter (medianavvikelse): {scg.timingJitterMs.toFixed(2)} ms · {scg.resampled ? 'Interpolerad till jämna tidssteg' : 'Ej interpolerad'}</Text>
           {scg.artifactWarning ? <Text style={styles.caption}>{scg.artifactWarning}</Text> : null}
           <Text style={styles.body}>Stabilitet mellan mätningens halvor: {scg.windowConsistency ? 'Liknande antal impulser' : 'Ej bekräftad'}</Text>
           <Text style={styles.caption}>Detta är ingen pulsmätning eller hjärtdiagnostik. Impulser kan komma från andning, kontakt eller sensorbrus.</Text>

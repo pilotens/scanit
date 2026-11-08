@@ -1,7 +1,7 @@
 import type { ScgReport } from './scgAnalysis';
 export type RepeatSummary = {
   count:number; rmsRangePercent:number; medianIntervalRangePercent:number|null;
-  waveformSimilarity:number|null; conclusion:string;
+  waveformSimilarity:number|null; templateSimilarity:number|null; templatePairs:number; conclusion:string;
 };
 export type RepeatEntry = {rms:number; scg:ScgReport|null};
 function correlation(a:number[],b:number[]):number|null{
@@ -25,6 +25,12 @@ export function summarizeRepeats(entries:RepeatEntry[]):RepeatSummary|null{
     if(a&&b){const score=correlation(a,b);if(score!==null)scores.push(score);}
   }
   const waveformSimilarity=scores.length?scores.reduce((s,v)=>s+v,0)/scores.length:null;
-  return {count:entries.length,rmsRangePercent,medianIntervalRangePercent,waveformSimilarity,
-    conclusion:'Jämförelsen beskriver upprepbarhet av mekaniska signaler, inte hjärtrytm eller hälsostatus. Kurvkorrelation påverkas starkt av tidsförskjutning och placering.'};
+  const templateScores:number[]=[];
+  for(let i=1;i<entries.length;i++){
+    const a=entries[i-1]!.scg?.eventTemplate,b=entries[i]!.scg?.eventTemplate;
+    if(a&&b){const score=correlation(a,b);if(score!==null)templateScores.push(score);}
+  }
+  const templateSimilarity=templateScores.length?templateScores.reduce((sum,v)=>sum+v,0)/templateScores.length:null;
+  return {count:entries.length,rmsRangePercent,medianIntervalRangePercent,waveformSimilarity,templateSimilarity,templatePairs:templateScores.length,
+    conclusion:'Jämförelsen beskriver upprepbarhet av mekaniska signaler, inte hjärtrytm eller hälsostatus. Händelsejusterade mallar minskar påverkan av olika starttidpunkter men är fortfarande känsliga för placering, felidentifierade impulser och sensorbrus.'};
 }

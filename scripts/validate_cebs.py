@@ -77,7 +77,14 @@ def run(name,cache):
     # NOT held-out accuracy. Include lag=0 to reveal calibration sensitivity.
     scores=[score(events,refs,float(lag)) for lag in np.arange(-.4,.401,.02)]
     best=max(scores,key=lambda v:v["f1"])
-    # Split the 30-second window: fit lag on first 15 s only, then evaluate on last 15 s.\n    train_events=events[events<15]; train_refs=refs[refs<15]\n    test_events=events[events>=15]; test_refs=refs[refs>=15]\n    train_scores=[score(train_events,train_refs,float(lag)) for lag in np.arange(-.4,.401,.02)]\n    selected_lag=max(train_scores,key=lambda v:v["f1"])["lag_seconds"]\n    holdout=score(test_events,test_refs,selected_lag)\n    return {"record":name,"n_samples":len(segment),"fs_original":FS,"fs_phone_simulated":60,\n            "train_selected_lag_seconds":selected_lag,"holdout_last_15_seconds":holdout,
+    # Split the 30-second window: fit lag on first 15 s only, then evaluate on last 15 s.
+    train_events=events[events<15]; train_refs=refs[refs<15]
+    test_events=events[events>=15]; test_refs=refs[refs>=15]
+    train_scores=[score(train_events,train_refs,float(lag)) for lag in np.arange(-.4,.401,.02)]
+    selected_lag=max(train_scores,key=lambda v:v["f1"])["lag_seconds"]
+    holdout=score(test_events,test_refs,selected_lag)
+    return {"record":name,"n_samples":len(segment),"fs_original":FS,"fs_phone_simulated":60,
+            "train_selected_lag_seconds":selected_lag,"holdout_last_15_seconds":holdout,
             "zero_lag":score(events,refs,0),"best_lag_in_sample":best,
             "limitations":["Lag selected on first 15 seconds and evaluated on second 15 seconds; same subject and recording","ECG peaks are automatically derived, not expert-reviewed",
               "Different sensor, placement, calibration and hardware from iPhone",

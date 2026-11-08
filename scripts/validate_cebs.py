@@ -101,7 +101,20 @@ def main():
     for name in args.records:
         if not name.startswith("b") or len(name)!=4 or not name[1:].isdigit():raise ValueError("Only CEBS baseline bNNN records")
         results.append(run(name,Path(args.cache)))
+    # Micro-average from raw event counts, rather than averaging rounded F1 scores.
+    matched=sum(r["holdout_last_15_seconds"]["matched"] for r in results)
+    candidates=sum(r["holdout_last_15_seconds"]["candidates"] for r in results)
+    reference=sum(r["holdout_last_15_seconds"]["ecg_reference_peaks"] for r in results)
+    precision=matched/candidates if candidates else 0
+    recall=matched/reference if reference else 0
+    micro_f1=2*precision*recall/(precision+recall) if precision+recall else 0
+    per_record=[r["holdout_last_15_seconds"]["f1"] for r in results]
     result={"dataset":"PhysioNet CEBSDB 1.0.0","method":"exploratory within-record temporal holdout; no independent subject-level validation",
+            "aggregate_holdout":{"records":len(results),"matched":matched,"candidates":candidates,
+              "ecg_reference_peaks":reference,"micro_precision":round(precision,4),
+              "micro_recall":round(recall,4),"micro_f1":round(micro_f1,4),
+              "median_record_f1":round(float(np.median(per_record)),4),
+              "min_record_f1":round(min(per_record),4),"max_record_f1":round(max(per_record),4)},
             "results":results}
     Path(args.output).write_text(json.dumps(result,indent=2),encoding="utf-8")
     print(json.dumps(result,indent=2))

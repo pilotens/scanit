@@ -1,0 +1,82 @@
+import type { MotionPoint } from './motionAnalysis';
+
+export type ScgReport = {
+  quality: 'candidate' | 'unconfirmed' | 'insufficient';
+  explanation: string;
+  sampleRateHz: number;
+  candidateEvents: number;
+  medianIntervalMs: number | null;
+  intervalVariationPercent: number | null;
+  windowConsistency: boolean;
+  artifactFraction: number;
+  axis: 'x' | 'y' | 'z' | null;
+  filteredWaveform: number[];
+};
+
+function median(v:number[]):number {
+  if(!v.length)return 0;
+  const sorted=[...v].sort((a,b)=>a-b);
+  return sorted[Math.floor(sorted.length/2)]!;
+}
+function bandpass(input:number[],fs:number,low:number,high:number){
+  // Cascaded one-pole high-pass and low-pass; exploratory, not a clinical filter.
+  const dt=1/fs, rcHigh=1/(2*Math.PI*low), rcLow=1/(2*Math.PI*high);
+  const alphaHigh=rcHigh/(rcHigh+dt), alphaLow=dt/(rcLow+dt);
+  const output:number[]=[];let hp=0,lp=0,prev=input[0]??0;
+  for(const x of input){hp=alphaHigh*(hp+x-prev);prev=x;lp+=alphaLow*(hp-lp);output.push(lp);}
+  return output;
+}
+export function analyzeScg(points:MotionPoint[]):ScgReport|null{
+  if(points.length<300)return null;
+  const duration=(points[points.length-1]!.t-points[0]!.t)/1000;
+  if(duration<15)return null;
+  const fs=(points.length-1)/duration;
+  if(fs<35)return null;
+  const intervals=points.slice(1).map((p,i)=>p.t-points[i]!.t);
+  const gapFraction=intervals.filter(v=>v>50||v<5).length/intervals.length;
+  const axes=(['x','y','z'] as const).map(axis=>{
+    const values=points.map(p=>p[axis]);
+    const filtered=bandpass(values,fs,.8,20);
+    const rms=Math.sqrt(filtered.reduce((s,v)=>s+v*v,0)/filtered.length);
+    return {axis,filtered,rms};
+  }).sort((a,b)=>b.rms-a.rms);
+  const chosen=axes[0]!;
+  const signal=chosen.filtered;
+  // Detect large local energy excursions, not ECG R-peaks or verified cardiac events.
+  const envelope=signal.map(v=>Math.abs(v));
+  const threshold=Math.max(.018,median(envelope)*3);
+  const minDistance=Math.round(fs*.35);
+  const events:number[]=[];
+  for(let i=2;i<envelope.length-2;i++){
+    if(envelope[i]!<threshold || envelope[i]!<=envelope[i-1]! || envelope[i]!<envelope[i+1]!)continue;
+    if(events.length && i-events[events.length-1]!<minDistance){
+      const last=events[events.length-1]!;
+      if(envelope[i]!>envelope[last]!)events[events.length-1]=i;
+    }else events.push(i);
+  }
+  const diffs=events.slice(1).map((v,i)=>(points[v]!.t-points[events[i]!]!.t));
+  const plausible=diffs.filter(v=>v>=350&&v<=1500);
+  const med=median(plausible);
+  const mad=median(plausible.map(v=>Math.abs(v-med)));
+  const variation=med>0?100*mad/med:null;
+  const half=points.length/2;
+  const left=events.filter(v=>v<half).length;
+  const right=events.filter(v=>v>=half).length;
+  const windowConsistency=left>=5&&right>=5&&Math.abs(left-right)/Math.max(left,right)<.3;
+  const artifactFraction=envelope.filter(v=>v>Math.max(.3,threshold*6)).length/envelope.length;
+  const candidate=events.length>=15 && plausible.length>=events.length*.7 &&
+    variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
+  const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
+  return {
+    quality,
+    explanation:quality==='candidate'
+      ? 'Återkommande mekaniska impulser upptäcktes. De är INTE bekräftade hjärtslag. Kontrollera mot samtidig EKG- eller pulsmätning.'
+      : quality==='insufficient'
+      ? 'Rörelseartefakter eller tidsavvikelser begränsar analysen. Prova med telefonen stilla på bröstbenet.'
+      : 'Mekaniska impulser kunde inte identifieras konsekvent. Ingen fysiologisk rytm kan rapporteras.',
+    sampleRateHz:fs,candidateEvents:events.length,medianIntervalMs:plausible.length>=8?med:null,
+    intervalVariationPercent:plausible.length>=8?variation:null,windowConsistency,artifactFraction,
+    axis:chosen.axis,
+    filteredWaveform:Array.from({length:180},(_,i)=>Number(signal[Math.min(signal.length-1,Math.floor(i*signal.length/180))]!.toFixed(5)))
+  };
+}

@@ -6,6 +6,7 @@ import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
 import { colors } from '@/constants/theme';
 import { MotionWaveform } from '@/components/MotionWaveform.web';
+import { analyzeMotionSpectrum, type SpectralReport } from '@/services/sensors/motionSpectrum';
 import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/sensors/motionAnalysis';
 
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
@@ -17,6 +18,7 @@ export default function BrowserSensorLab() {
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [captured, setCaptured] = useState<MotionPoint[]>([]);
+  const [spectrum, setSpectrum] = useState<SpectralReport | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
   const readings = useRef<MotionPoint[]>([]);
   const cleanup = useRef<(() => void) | null>(null);
@@ -34,6 +36,7 @@ export default function BrowserSensorLab() {
     const result = analyzeMotion(readings.current);
     setReport(result);
     setCaptured([...readings.current]);
+    setSpectrum(analyzeMotionSpectrum(readings.current));
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
@@ -42,6 +45,7 @@ export default function BrowserSensorLab() {
     if (active.current) return;
     setReport(null);
     setCaptured([]);
+    setSpectrum(null);
     setCopyStatus('');
     setElapsed(0);
     readings.current = [];
@@ -82,6 +86,7 @@ export default function BrowserSensorLab() {
       measurement: 'accelerationIncludingGravity', units: 'm/s²',
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
+      exploratorySpectrum: spectrum,
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
       analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och eventuella återkommande mönster. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
@@ -105,6 +110,12 @@ export default function BrowserSensorLab() {
       </Card>
 
       {report ? <>
+        {spectrum ? <Card>
+          <Text style={styles.heading}>Frekvensanalys · experimentell</Text>
+          {spectrum.bands.map(b => <Text key={b.name} style={styles.body}>{b.name} ({b.fromHz}–{b.toHz} Hz): starkaste komponent {b.peakHz === null ? 'ej identifierad' : `${b.peakHz.toFixed(2)} Hz`}</Text>)}
+          <Text style={styles.body}>Stabilitet mellan två tidsfönster: {spectrum.windowsAgree ? 'Liknande dominerande frekvens' : 'Ej bekräftad'}</Text>
+          <Text style={styles.caption}>{spectrum.warning}</Text>
+        </Card> : null}
         <Card>
           <Text style={styles.eyebrow}>RESULTAT · SIGNALKVALITET</Text>
           <Text style={styles.resultTitle}>{report.qualityText}</Text>

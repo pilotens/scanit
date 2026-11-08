@@ -13,6 +13,7 @@ import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/s
 
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
 const DURATION_MS = 30000;
+const REQUESTED_SENSOR_HZ = 200;
 const HISTORY_KEY = 'scanit-personal-signal-history-v1';
 type Posture = 'supine' | 'reclined45';
 type PersonalEntry = {timestamp: string; mode: 'sternum' | 'table'; rms: number; scg: ScgReport | null; referenceBpm: number | null; note: string; posture?: Posture; durationSeconds?: number};
@@ -23,6 +24,7 @@ export default function BrowserSensorLab() {
   const [running, setRunning] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [wakeStatus, setWakeStatus] = useState('');
+  const [sensorSource, setSensorSource] = useState('DeviceMotion');
   const [elapsed, setElapsed] = useState(0);
   const [captured, setCaptured] = useState<MotionPoint[]>([]);
   const [spectrum, setSpectrum] = useState<SpectralReport | null>(null);
@@ -108,13 +110,14 @@ export default function BrowserSensorLab() {
     setScg(null);
     setCopyStatus('');
     setElapsed(0);
+    setSensorSource('DeviceMotion');
     readings.current = [];
     measurementMode.current = mode;
     postureRef.current = posture;
     try {
-      if (!('DeviceMotionEvent' in window)) throw new Error('Rörelsesensor saknas i den här webbläsaren.');
-      const motion = DeviceMotionEvent as PermissionMotionEvent;
-      if (typeof motion.requestPermission === 'function') {
+      if (!('DeviceMotionEvent' in window) && !('Accelerometer' in window)) throw new Error('Rörelsesensor saknas i den här webbläsaren.');
+      const motion = ('DeviceMotionEvent' in window ? DeviceMotionEvent : null) as PermissionMotionEvent | null;
+      if (motion && typeof motion.requestPermission === 'function') {
         const permission = await motion.requestPermission();
         if (permission !== 'granted') throw new Error('Rörelsebehörighet nekades. Tillåt åtkomst i Safari.');
       }
@@ -138,11 +141,39 @@ export default function BrowserSensorLab() {
         if (![a.x, a.y, a.z].every(Number.isFinite)) return;
         readings.current.push({ t: performance.now(), x: a.x, y: a.y, z: a.z });
       };
-      window.addEventListener('devicemotion', listener);
+      // Generic Sensor API supports an explicit frequency request where implemented.
+      // Safari normally exposes only DeviceMotion; do not synthesize extra samples.
+      type FastAccelerometer = {x:number|null;y:number|null;z:number|null;start:()=>void;stop:()=>void;addEventListener:(name:string,cb:()=>void)=>void};
+      const sensorWindow = window as Window & {Accelerometer?:new (options:{frequency:number})=>FastAccelerometer};
+      let fastSensor:FastAccelerometer|null=null;
+      let usingFast=false;
+      if(sensorWindow.Accelerometer) {
+        try {
+          fastSensor=new sensorWindow.Accelerometer({frequency:REQUESTED_SENSOR_HZ});
+          const sensor=fastSensor;
+          sensor.addEventListener('reading',()=>{
+            if(!active.current)return;
+            const {x,y,z}=sensor;
+            if(x==null||y==null||z==null||![x,y,z].every(Number.isFinite))return;
+            readings.current.push({t:performance.now(),x,y,z});
+          });
+          sensor.start();
+          usingFast=true;
+          setSensorSource('Accelerometer API (begärt 200 Hz; faktisk frekvens visas i resultatet)');
+        } catch {
+          fastSensor=null;
+        }
+      }
+      if(!usingFast) {
+        if(!motion)throw new Error('Ingen tillgänglig rörelsesensor kunde startas.');
+        window.addEventListener('devicemotion',listener);
+        setSensorSource('DeviceMotion (webbläsarens maximala leveransfrekvens)');
+      }
       const interval = window.setInterval(() => setElapsed(Math.min(30, Math.floor((performance.now() - startTime) / 1000))), 250);
       const timeout = window.setTimeout(() => stopRef.current(), DURATION_MS);
       cleanup.current = () => {
         window.removeEventListener('devicemotion', listener);
+        try{fastSensor?.stop();}catch{}
         window.clearInterval(interval);
         window.clearTimeout(timeout);
       };
@@ -163,6 +194,8 @@ export default function BrowserSensorLab() {
       measurement: 'accelerationIncludingGravity', units: 'm/s²',
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
+      sensorSource,
+      requestedSensorHz: sensorSource.startsWith('Accelerometer API') ? REQUESTED_SENSOR_HZ : null,
       exploratorySpectrum: spectrum,
       protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? (measurementPosture === 'reclined45' ? 'Reclined approximately 45 degrees, iPhone on sternum' : 'Supine, iPhone on sternum') : 'Phone resting on a stable table', referenceBpm: measuredReference, capturedDurationSeconds: captureSeconds, completeCapture: captureSeconds >= 29},
       exploratoryScg: scg,

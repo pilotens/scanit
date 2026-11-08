@@ -45,9 +45,9 @@ def detect_ecg(ecg):
     peaks,_=find_peaks(envelope,distance=int(.35*FS),prominence=max(np.std(envelope)*1.2,1e-6))
     return peaks/FS
 
-def score(events, reference, lag):
+def score(events, reference, lag, tolerance=.15):
     # Match events one-to-one with 150 ms tolerance after global lag.
-    tolerance=.15; i=j=tp=0
+    i=j=tp=0
     shifted=events+lag
     while i<len(shifted) and j<len(reference):
         if abs(shifted[i]-reference[j])<=tolerance:tp+=1;i+=1;j+=1
@@ -83,8 +83,12 @@ def run(name,cache):
     train_scores=[score(train_events,train_refs,float(lag)) for lag in np.arange(-.4,.401,.02)]
     selected_lag=max(train_scores,key=lambda v:v["f1"])["lag_seconds"]
     holdout=score(test_events,test_refs,selected_lag)
+    sensitivity={str(int(tol*1000))+"ms":score(test_events,test_refs,selected_lag,tol) for tol in (.05,.10,.15)}
+    # Fixed-lag and narrower tolerances expose dependence on permissive matching.
+    fixed_lag=score(test_events,test_refs,-.15,.10)
     return {"record":name,"n_samples":len(segment),"fs_original":FS,"fs_phone_simulated":60,
             "train_selected_lag_seconds":selected_lag,"holdout_last_15_seconds":holdout,
+            "holdout_tolerance_sensitivity":sensitivity,"holdout_fixed_lag_100ms":fixed_lag,
             "zero_lag":score(events,refs,0),"best_lag_in_sample":best,
             "limitations":["Lag selected on first 15 seconds and evaluated on second 15 seconds; same subject and recording","ECG peaks are automatically derived, not expert-reviewed",
               "Different sensor, placement, calibration and hardware from iPhone",

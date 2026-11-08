@@ -14,7 +14,8 @@ import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/s
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
 const DURATION_MS = 30000;
 const HISTORY_KEY = 'scanit-personal-signal-history-v1';
-type PersonalEntry = {timestamp: string; mode: 'sternum' | 'table'; rms: number; scg: ScgReport | null; referenceBpm: number | null; note: string};
+type Posture = 'supine' | 'reclined45';
+type PersonalEntry = {timestamp: string; mode: 'sternum' | 'table'; rms: number; scg: ScgReport | null; referenceBpm: number | null; note: string; posture?: Posture; durationSeconds?: number};
 
 export default function BrowserSensorLab() {
   const [status, setStatus] = useState('Redo för mätning');
@@ -26,6 +27,9 @@ export default function BrowserSensorLab() {
   const [captured, setCaptured] = useState<MotionPoint[]>([]);
   const [spectrum, setSpectrum] = useState<SpectralReport | null>(null);
   const [mode, setMode] = useState<'sternum' | 'table'>('sternum');
+  const [posture, setPosture] = useState<Posture>('reclined45');
+  const [measurementPosture, setMeasurementPosture] = useState<Posture>('reclined45');
+  const [captureSeconds, setCaptureSeconds] = useState(0);
   const [scg, setScg] = useState<ScgReport | null>(null);
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
@@ -36,6 +40,7 @@ export default function BrowserSensorLab() {
   const [repeats, setRepeats] = useState<{sternum: RepeatEntry[]; table: RepeatEntry[]}>({sternum: [], table: []});
   const [controls, setControls] = useState<{sternum?: {motion: MotionReport; spectrum: SpectralReport | null}; table?: {motion: MotionReport; spectrum: SpectralReport | null}}>({});
   const measurementMode = useRef<'sternum' | 'table'>('sternum');
+  const postureRef = useRef<Posture>('reclined45');
   const readings = useRef<MotionPoint[]>([]);
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
@@ -79,16 +84,18 @@ export default function BrowserSensorLab() {
     const scgResult = measurementMode.current === 'sternum' ? analyzeScg(readings.current) : null;
     if (result) {
       const validRef = reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null;
-      setHistory(previous => [...previous, {timestamp: new Date().toISOString(), mode: measurementMode.current, rms: result.variationRms, scg: scgResult, referenceBpm: validRef, note: note.slice(0,160)}].slice(-100));
+      setHistory(previous => [...previous, {timestamp: new Date().toISOString(), mode: measurementMode.current, rms: result.variationRms, scg: scgResult, referenceBpm: validRef, note: note.slice(0,160), posture: postureRef.current, durationSeconds: result.durationSeconds}].slice(-100));
       setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
       setRepeats(previous => ({...previous, [measurementMode.current]: [...previous[measurementMode.current], {rms: result.variationRms, scg: scgResult}].slice(-5)}));
     }
     setReport(result);
+    setMeasurementPosture(postureRef.current);
+    setCaptureSeconds(result?.durationSeconds ?? 0);
     setCaptured([...readings.current]);
     setSpectrum(spectralResult);
     setScg(scgResult);
     setMeasuredReference(reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null);
-    setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
+    setStatus(result ? result.durationSeconds < 29 ? 'Ofullständig registrering: mindre än 29 sekunder sensordata. Gör om mätningen.' : 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
 
@@ -103,6 +110,7 @@ export default function BrowserSensorLab() {
     setElapsed(0);
     readings.current = [];
     measurementMode.current = mode;
+    postureRef.current = posture;
     try {
       if (!('DeviceMotionEvent' in window)) throw new Error('Rörelsesensor saknas i den här webbläsaren.');
       const motion = DeviceMotionEvent as PermissionMotionEvent;
@@ -156,7 +164,7 @@ export default function BrowserSensorLab() {
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
       exploratorySpectrum: spectrum,
-      protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: measuredReference},
+      protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? (measurementPosture === 'reclined45' ? 'Reclined approximately 45 degrees, iPhone on sternum' : 'Supine, iPhone on sternum') : 'Phone resting on a stable table', referenceBpm: measuredReference, capturedDurationSeconds: captureSeconds, completeCapture: captureSeconds >= 29},
       exploratoryScg: scg,
       pairedControl: controls,
       repeatedMeasurements: repeats,
@@ -181,6 +189,9 @@ export default function BrowserSensorLab() {
         <Text style={styles.body}>Välj mätprotokoll. För jämförelse: mät först på bröstbenet, sedan med samma telefon på ett stabilt bord.</Text>
         <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => {if (!running) setMode('sternum');}} />
         <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => {if (!running) setMode('table');}} />
+        <Text style={styles.heading}>Kroppsställning</Text>
+        <AppButton label={posture === 'reclined45' ? 'Halvsittande cirka 45° (valt)' : 'Välj halvsittande cirka 45°'} secondary onPress={() => {if (!running && countdown === null) setPosture('reclined45');}} />
+        <AppButton label={posture === 'supine' ? 'Liggande på rygg (valt)' : 'Välj liggande på rygg'} secondary onPress={() => {if (!running && countdown === null) setPosture('supine');}} />
         <Text style={styles.body}>Personligt protokoll: ligg på rygg i samma position, använd samma telefon och orientering, och låt den vila mot samma punkt på bröstbenet. Gör tre bröstmätningar i följd och en bordskontroll. Flytta inte telefonen under en mätning.</Text>
         <TextInput value={note} onChangeText={setNote} placeholder="Anteckning, t.ex. placering eller rörelse (valfritt)" style={styles.input} />
         <Text style={styles.body}>Om du har en separat pulsmätare, ange dess värde före start. Referensen sparas tillsammans med mätningen.</Text>
@@ -196,7 +207,7 @@ export default function BrowserSensorLab() {
       <Card>
         <Text style={styles.heading}>Min personliga mäthistorik</Text>
         <Text style={styles.body}>{history.length} sparade mätningar på den här enheten (max 100). Ingen automatisk uppladdning.</Text>
-        {history.slice(-8).reverse().map((item,i) => <Text key={item.timestamp+i} style={styles.body}>{new Date(item.timestamp).toLocaleString('sv-SE')} · {item.mode === 'sternum' ? 'Bröstben' : 'Bord'} · RMS {item.rms.toFixed(4)} m/s² · {item.scg?.quality === 'candidate' ? 'Mekaniskt mönster' : 'Ej verifierat mönster'}{item.note ? ' · '+item.note : ''}</Text>)}
+        {history.slice(-8).reverse().map((item,i) => <Text key={item.timestamp+i} style={styles.body}>{new Date(item.timestamp).toLocaleString('sv-SE')} · {item.mode === 'sternum' ? 'Bröstben' : 'Bord'} · {item.mode === 'sternum' ? (item.posture === 'reclined45' ? '45°' : item.posture === 'supine' ? 'Ryggläge' : 'Okänd ställning') : 'Kontroll'} · {item.durationSeconds === undefined ? 'Okänd längd' : item.durationSeconds.toFixed(1)+' s'} · RMS {item.rms.toFixed(4)} m/s² · {item.scg?.quality === 'candidate' ? 'Mekaniskt mönster' : 'Ej verifierat mönster'}{item.note ? ' · '+item.note : ''}</Text>)}
         <Text style={styles.caption}>Historiken ligger lokalt i webbläsaren och kan försvinna om webbplatsens data rensas. Exportera JSON efter viktiga mätningar. Resultaten visar inte hjärthälsa.</Text>
         <AppButton label="Radera lokal mäthistorik" secondary onPress={() => setHistory([])} />
       </Card>
@@ -227,6 +238,8 @@ export default function BrowserSensorLab() {
       {report ? <>
         {scg ? <Card>
           <Text style={styles.heading}>SCG-analys · {measurementMode.current === 'sternum' ? 'Bröstben, ryggläge' : 'Bordskontroll'}</Text>
+          <Text style={styles.body}>Kroppsställning: {measurementPosture === 'reclined45' ? 'Halvsittande cirka 45°' : 'Ryggläge'} · Sensorlängd: {captureSeconds.toFixed(2)} s</Text>
+          {captureSeconds < 29 ? <Text style={styles.status}>Mätningen är ofullständig. Upprepa för jämförbar personlig analys.</Text> : null}
           <Text style={styles.body}>Bedömning: {scg.quality === 'candidate' ? 'Mekaniskt mönster identifierat – ej verifierat' : scg.quality === 'insufficient' ? 'Störd mätning' : 'Inget säkert återkommande mönster'}</Text>
           <Text style={styles.body}>{scg.explanation}</Text>
           <Text style={styles.body}>Registrerade impulskandidater: {scg.candidateEvents} · Analysaxel: {scg.axis?.toUpperCase() ?? '–'}</Text>

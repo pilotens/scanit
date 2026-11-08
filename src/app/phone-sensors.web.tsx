@@ -6,6 +6,7 @@ import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
 import { colors } from '@/constants/theme';
 import { MotionWaveform } from '@/components/MotionWaveform.web';
+import { summarizeRepeats, type RepeatEntry } from '@/services/sensors/scgRepeatability';
 import { analyzeScg, type ScgReport } from '@/services/sensors/scgAnalysis';
 import { analyzeMotionSpectrum, type SpectralReport } from '@/services/sensors/motionSpectrum';
 import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/sensors/motionAnalysis';
@@ -24,6 +25,7 @@ export default function BrowserSensorLab() {
   const [scg, setScg] = useState<ScgReport | null>(null);
   const [reference, setReference] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
+  const [repeats, setRepeats] = useState<{sternum: RepeatEntry[]; table: RepeatEntry[]}>({sternum: [], table: []});
   const [controls, setControls] = useState<{sternum?: {motion: MotionReport; spectrum: SpectralReport | null}; table?: {motion: MotionReport; spectrum: SpectralReport | null}}>({});
   const measurementMode = useRef<'sternum' | 'table'>('sternum');
   const readings = useRef<MotionPoint[]>([]);
@@ -41,11 +43,15 @@ export default function BrowserSensorLab() {
     setRunning(false);
     const result = analyzeMotion(readings.current);
     const spectralResult = analyzeMotionSpectrum(readings.current);
-    if (result) setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
+    const scgResult = analyzeScg(readings.current);
+    if (result) {
+      setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
+      setRepeats(previous => ({...previous, [measurementMode.current]: [...previous[measurementMode.current], {rms: result.variationRms, scg: scgResult}].slice(-5)}));
+    }
     setReport(result);
     setCaptured([...readings.current]);
     setSpectrum(spectralResult);
-    setScg(analyzeScg(readings.current));
+    setScg(scgResult);
     setStatus(result ? 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
   stopRef.current = stop;
@@ -101,6 +107,8 @@ export default function BrowserSensorLab() {
       protocol: {mode: measurementMode.current, position: measurementMode.current === 'sternum' ? 'Supine, iPhone on sternum' : 'Phone resting on a stable table', referenceBpm: reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null},
       exploratoryScg: scg,
       pairedControl: controls,
+      repeatedMeasurements: repeats,
+      repeatability: summarizeRepeats(repeats[measurementMode.current]),
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
       analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och eventuella återkommande mönster. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
@@ -126,6 +134,20 @@ export default function BrowserSensorLab() {
         {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : <AppButton label="Starta verklig mätning" onPress={start} />}
       </Card>
 
+      <Card>
+        <Text style={styles.heading}>Upprepbarhet · senaste fem mätningarna</Text>
+        <Text style={styles.body}>Bröstben: {repeats.sternum.length}/5 mätningar · Bord: {repeats.table.length}/5 mätningar</Text>
+        {(['sternum','table'] as const).map(key => { const summary = summarizeRepeats(repeats[key]); return <View key={key}>
+          <Text style={styles.heading}>{key === 'sternum' ? 'Bröstben' : 'Bord'}</Text>
+          {summary ? <>
+            <Text style={styles.body}>Variation i RMS mellan mätningar: {summary.rmsRangePercent.toFixed(1)} % av medelvärdet.</Text>
+            <Text style={styles.body}>Variation i kandidatintervall: {summary.medianIntervalRangePercent === null ? 'Otillräckligt underlag' : `${summary.medianIntervalRangePercent.toFixed(1)} %`}</Text>
+            <Text style={styles.body}>Direkt kurvkorrelation: {summary.waveformSimilarity === null ? 'Ej beräkningsbar' : summary.waveformSimilarity.toFixed(2)} (tidsförskjutningskänslig).</Text>
+            <Text style={styles.caption}>{summary.conclusion}</Text>
+          </> : <Text style={styles.body}>Minst två mätningar behövs för jämförelse.</Text>}
+        </View>; })}
+        <AppButton label="Nollställ upprepade mätningar" secondary onPress={() => setRepeats({sternum: [], table: []})} />
+      </Card>
       {controls.sternum && controls.table ? <Card>
         <Text style={styles.heading}>Bröstkorg kontra bord · kontrollanalys</Text>
         <Text style={styles.body}>Bröstkorg: {controls.sternum.motion.variationRms.toFixed(4)} m/s² RMS</Text>

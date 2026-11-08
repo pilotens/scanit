@@ -20,6 +20,8 @@ export default function BrowserSensorLab() {
   const [status, setStatus] = useState('Redo för mätning');
   const [report, setReport] = useState<MotionReport | null>(null);
   const [running, setRunning] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [wakeStatus, setWakeStatus] = useState('');
   const [elapsed, setElapsed] = useState(0);
   const [captured, setCaptured] = useState<MotionPoint[]>([]);
   const [spectrum, setSpectrum] = useState<SpectralReport | null>(null);
@@ -38,8 +40,11 @@ export default function BrowserSensorLab() {
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
   const stopRef = useRef<() => void>(() => {});
+  const wakeLock = useRef<{release: () => Promise<void>} | null>(null);
+  const starting = useRef(false);
+  const releaseWake = () => {const lock=wakeLock.current;wakeLock.current=null;if(lock)void lock.release().catch(()=>{});};
 
-  useEffect(() => () => { active.current = false; cleanup.current?.(); }, []);
+  useEffect(() => () => { active.current = false; cleanup.current?.();releaseWake(); }, []);
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(HISTORY_KEY);
@@ -68,6 +73,7 @@ export default function BrowserSensorLab() {
     cleanup.current?.();
     cleanup.current = null;
     setRunning(false);
+    releaseWake();
     const result = analyzeMotion(readings.current);
     const spectralResult = analyzeMotionSpectrum(readings.current);
     const scgResult = measurementMode.current === 'sternum' ? analyzeScg(readings.current) : null;
@@ -87,7 +93,8 @@ export default function BrowserSensorLab() {
   stopRef.current = stop;
 
   const start = async () => {
-    if (active.current) return;
+    if (active.current || starting.current) return;
+    starting.current=true;
     setReport(null);
     setCaptured([]);
     setSpectrum(null);
@@ -103,8 +110,20 @@ export default function BrowserSensorLab() {
         const permission = await motion.requestPermission();
         if (permission !== 'granted') throw new Error('Rörelsebehörighet nekades. Tillåt åtkomst i Safari.');
       }
+      try {
+        const wakeApi = navigator as Navigator & {wakeLock?: {request: (type:'screen') => Promise<{release:()=>Promise<void>}>}};
+        if(wakeApi.wakeLock) {wakeLock.current=await wakeApi.wakeLock.request('screen');setWakeStatus('Skärmen hålls aktiv under mätningen.');}
+        else setWakeStatus('Webbläsaren stöder inte skärmlås. Håll skärmen aktiv.');
+      } catch {setWakeStatus('Kunde inte förhindra skärmlås. Håll Safari öppet.');}
+      setCountdown(2);
+      setStatus('Mätningen startar om 2 sekunder. Lägg telefonen stilla.');
+      await new Promise<void>(resolve=>window.setTimeout(resolve,1000));
+      setCountdown(1);
+      await new Promise<void>(resolve=>window.setTimeout(resolve,1000));
+      setCountdown(null);
       const startTime = performance.now();
       active.current = true;
+      starting.current=false;
       const listener = (event: DeviceMotionEvent) => {
         const a = event.accelerationIncludingGravity;
         if (!a || a.x == null || a.y == null || a.z == null) return;
@@ -122,6 +141,9 @@ export default function BrowserSensorLab() {
       setRunning(true);
       setStatus('Samlar verkliga rörelsedata…');
     } catch (e) {
+      starting.current=false;
+      setCountdown(null);
+      releaseWake();
       setStatus(e instanceof Error ? e.message : 'Kunde inte läsa rörelsesensorn');
     }
   };
@@ -165,8 +187,10 @@ export default function BrowserSensorLab() {
         <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min (valfritt)" style={styles.input} />
         <Text style={styles.body}>Placera telefonen stilla mot bröstkorgen eller på ett stabilt underlag. Undvik att hålla den i handen. Mät i 30 sekunder med skärmen aktiv.</Text>
         <Text style={styles.status}>{status}</Text>
+        {countdown !== null ? <Text style={styles.timer}>Start om {countdown}…</Text> : null}
         {running ? <Text style={styles.timer}>{elapsed} / 30 sekunder</Text> : null}
-        {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : <AppButton label="Starta verklig mätning" onPress={start} />}
+        {wakeStatus ? <Text style={styles.caption}>{wakeStatus}</Text> : null}
+        {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : countdown !== null ? <Text style={styles.body}>Vänta tills nedräkningen är klar.</Text> : <AppButton label="Starta verklig mätning" onPress={start} />}
       </Card>
 
       <Card>

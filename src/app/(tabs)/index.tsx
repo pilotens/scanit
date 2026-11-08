@@ -34,6 +34,7 @@ export default function DashboardScreen() {
         <Text style={styles.heroBody}>
           {latestAssessment?.summary ?? 'Genomför en skanning för att skapa en första baslinje.'}
         </Text>
+        <AppButton label="Mät andning med mikrofonen (experimentellt)" onPress={() => router.push('/breathing')} />
         <AppButton label="Mät puls med kameran (experimentellt)" onPress={() => router.push('/pulse')} />
         <AppButton label="Starta verklig rörelsemätning" onPress={() => router.push('/phone-sensors')} />
         <AppButton label="Demonstrera simulerad RF-skanning" secondary onPress={() => router.push('/scan')} />

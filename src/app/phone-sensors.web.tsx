@@ -15,9 +15,8 @@ type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: ()
 const DURATION_MS = 30000;
 const REQUESTED_SENSOR_HZ = 200;
 const HISTORY_KEY = 'scanit-personal-signal-history-v1';
-type AudioFrame = {t:number;rms:number;peak:number};
-type MultiCapture = {origin:number;gyro:MotionPoint[];audio:AudioFrame[];audioStatus:string;audioSampleRate:number|null};
-const emptyMulti=():MultiCapture=>({origin:0,gyro:[],audio:[],audioStatus:'not requested',audioSampleRate:null});
+type MultiCapture = {origin:number;gyro:MotionPoint[]};
+const emptyMulti=():MultiCapture=>({origin:0,gyro:[]});
 function summarizeChannel(p:MotionPoint[], low:number, high:number){
   if(p.length<100)return null;
   const duration=(p[p.length-1]!.t-p[0]!.t)/1000;
@@ -67,8 +66,6 @@ export default function BrowserSensorLab() {
   const readings = useRef<MotionPoint[]>([]);
   const multi=useRef<MultiCapture>(emptyMulti());
   const [multiResult,setMultiResult]=useState<MultiCapture|null>(null);
-  const [micEnabled,setMicEnabled]=useState(true);
-  const audioCleanup=useRef<(()=>void)|null>(null);
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
   const stopRef = useRef<() => void>(() => {});
@@ -76,7 +73,7 @@ export default function BrowserSensorLab() {
   const starting = useRef(false);
   const releaseWake = () => {const lock=wakeLock.current;wakeLock.current=null;if(lock)void lock.release().catch(()=>{});};
 
-  useEffect(() => () => { active.current = false; cleanup.current?.();audioCleanup.current?.();releaseWake(); }, []);
+  useEffect(() => () => { active.current = false; cleanup.current?.();releaseWake(); }, []);
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(HISTORY_KEY);
@@ -104,8 +101,8 @@ export default function BrowserSensorLab() {
     active.current = false;
     cleanup.current?.();
     cleanup.current = null;
-    audioCleanup.current?.();audioCleanup.current=null;
-    setMultiResult({...multi.current,gyro:[...multi.current.gyro],audio:[...multi.current.audio]});
+    
+    setMultiResult({...multi.current,gyro:[...multi.current.gyro]});
     setRunning(false);
     releaseWake();
     const result = analyzeMotion(readings.current);
@@ -154,26 +151,6 @@ export default function BrowserSensorLab() {
         if(wakeApi.wakeLock) {wakeLock.current=await wakeApi.wakeLock.request('screen');setWakeStatus('Skärmen hålls aktiv under mätningen.');}
         else setWakeStatus('Webbläsaren stöder inte skärmlås. Håll skärmen aktiv.');
       } catch {setWakeStatus('Kunde inte förhindra skärmlås. Håll Safari öppet.');}
-      if(micEnabled){
-        try{
-          const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
-          audioCleanup.current=()=>stream.getTracks().forEach(t=>t.stop());
-          const ctx=new AudioContext();
-          audioCleanup.current=()=>{stream.getTracks().forEach(t=>t.stop());void ctx.close().catch(()=>{});};
-          await ctx.resume();
-          const source=ctx.createMediaStreamSource(stream), analyser=ctx.createAnalyser();
-          analyser.fftSize=1024;source.connect(analyser);
-          const buffer=new Float32Array(analyser.fftSize);
-          multi.current.audioSampleRate=ctx.sampleRate;multi.current.audioStatus='envelope capture';
-          const timer=window.setInterval(()=>{
-            if(!active.current)return;
-            analyser.getFloatTimeDomainData(buffer);
-            let sum=0,peak=0;for(const v of buffer){sum+=v*v;peak=Math.max(peak,Math.abs(v));}
-            multi.current.audio.push({t:performance.now(),rms:Math.sqrt(sum/buffer.length),peak});
-          },20);
-          audioCleanup.current=()=>{window.clearInterval(timer);source.disconnect();stream.getTracks().forEach(t=>t.stop());void ctx.close().catch(()=>{});};
-        }catch{audioCleanup.current?.();audioCleanup.current=null;multi.current.audioStatus='unavailable or denied';}
-      }else multi.current.audioStatus='disabled';
       setCountdown(2);
       setStatus('Mätningen startar om 2 sekunder. Lägg telefonen stilla.');
       await new Promise<void>(resolve=>window.setTimeout(resolve,1000));
@@ -233,7 +210,7 @@ export default function BrowserSensorLab() {
       setRunning(true);
       setStatus('Samlar verkliga rörelsedata…');
     } catch (e) {
-      active.current=false;cleanup.current?.();audioCleanup.current?.();audioCleanup.current=null;
+      active.current=false;cleanup.current?.();
       starting.current=false;
       setCountdown(null);
       releaseWake();
@@ -257,7 +234,6 @@ export default function BrowserSensorLab() {
         clock:'performance.now relative to common session origin; delivery timestamps, not hardware synchronization',
         accelerationStartMs:captured[0]!.t-multiResult.origin,
         gcg:{units:'degrees/s',columns:['elapsed_ms','beta','gamma','alpha'],samples:multiResult.gyro.map(p=>[p.t-multiResult.origin,p.x,p.y,p.z]),analysis:summarizeChannel(multiResult.gyro,.7,3)},
-        pcg:{status:multiResult.audioStatus,sourceSampleRateHz:multiResult.audioSampleRate,columns:['elapsed_ms','rms','peak'],samples:multiResult.audio.map(p=>[p.t-multiResult.origin,p.rms,p.peak]),warning:'Audio envelope only; no raw sound or validated heart sounds'},
         resp:{acceleration:summarizeChannel(captured,.1,.5),rotation:summarizeChannel(multiResult.gyro,.1,.5),warning:'Candidate low-frequency motion, not validated respiration'}
       }:null,
       harmonicChecks: scg?.harmonicChecks ?? null,
@@ -267,7 +243,7 @@ export default function BrowserSensorLab() {
       repeatability: summarizeRepeats(repeats[measurementMode.current]),
       samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
       columns: ['elapsed_ms','ax','ay','az'],
-      analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och återkommande mönster i SCG, GCG, PCG och RESP. Jämför tidsserier med gemensam sessionsreferens; ange osäker synkronisering. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
+      analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och återkommande mönster i SCG, GCG och RESP. Jämför tidsserier med gemensam sessionsreferens; ange osäker synkronisering. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload));
@@ -280,7 +256,7 @@ export default function BrowserSensorLab() {
   return (
     <Screen title="ScanIt · Multimodal" subtitle="Riktig iPhone-mätning utan extern utrustning">
       <Card>
-        <Text style={styles.heading}>SCG · GCG · PCG · RESP</Text>
+        <Text style={styles.heading}>SCG · GCG · RESP</Text>
         <Text style={styles.body}>Välj mätprotokoll. För jämförelse: mät först på bröstbenet, sedan med samma telefon på ett stabilt bord.</Text>
         <AppButton label={mode === 'sternum' ? 'Bröstben · ryggläge (valt)' : 'Välj bröstben · ryggläge'} secondary onPress={() => {if (!running) setMode('sternum');}} />
         <AppButton label={mode === 'table' ? 'Bord · kontrollmätning (valt)' : 'Välj bord · kontrollmätning'} secondary onPress={() => {if (!running) setMode('table');}} />
@@ -292,8 +268,6 @@ export default function BrowserSensorLab() {
         <Text style={styles.body}>Om du har en separat pulsmätare, ange dess värde före start. Referensen sparas tillsammans med mätningen.</Text>
         <TextInput value={reference} onChangeText={setReference} keyboardType="numeric" placeholder="Referenspuls, slag/min (valfritt)" style={styles.input} />
         <Text style={styles.body}>Placera telefonen stilla mot bröstkorgen eller på ett stabilt underlag. Undvik att hålla den i handen. Mät i 30 sekunder med skärmen aktiv.</Text>
-        <AppButton label={micEnabled?'Mikrofon PCG: på (tryck för av)':'Mikrofon PCG: av (tryck för på)'} secondary onPress={()=>{if(!running&&countdown===null&&!starting.current)setMicEnabled(v=>!v);}} />
-        <Text style={styles.caption}>Mikrofonen kräver tillstånd. Endast ljudenergi exporteras, inte tal eller ljudinspelning.</Text>
         <Text style={styles.status}>{status}</Text>
         {countdown !== null ? <Text style={styles.timer}>Start om {countdown}…</Text> : null}
         {running ? <Text style={styles.timer}>{elapsed} / 30 sekunder</Text> : null}
@@ -335,7 +309,6 @@ export default function BrowserSensorLab() {
       {multiResult ? <Card>
         <Text style={styles.heading}>Kompletterande sensorer</Text>
         <Text style={styles.body}>GCG: {multiResult.gyro.length} rotationsprover · {multiResult.gyro.length>=100?'registrerade':'otillräckliga eller saknas'}</Text>
-        <Text style={styles.body}>PCG: {multiResult.audioStatus} · {multiResult.audio.length} ljudenergifönster</Text>
         <Text style={styles.body}>RESP: {summarizeChannel(captured,.1,.5)?.axes.map(a=>a.axis+': '+(a.frequencyHz?.toFixed(2)??'–')+' Hz').join(' · ')??'Otillräckligt underlag'}</Text>
         <Text style={styles.caption}>Experimentella signaler. Ingen verifierad hjärt- eller andningsdiagnostik.</Text>
       </Card>:null}

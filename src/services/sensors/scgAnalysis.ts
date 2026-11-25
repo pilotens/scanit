@@ -2,6 +2,9 @@ import type { MotionPoint } from './motionAnalysis';
 import { analyzeMotionSpectrum } from './motionSpectrum';
 
 export type ScgReport = {
+  dataGaps: {startMs:number;endMs:number;durationMs:number}[];
+  eventTimesMs: number[];
+  eventIntervals: {startMs:number;endMs:number;durationMs:number;status:'accepted'|'short'|'long'|'gap'}[];
   quality: 'candidate' | 'unconfirmed' | 'insufficient';
   explanation: string;
   sampleRateHz: number;
@@ -51,6 +54,8 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   const intervals=points.slice(1).map((p,i)=>p.t-points[i]!.t);
   const gapFraction=intervals.filter(v=>v>50||v<5).length/intervals.length;
   const nominalStep=1000/fs;
+  const dataGaps=intervals.flatMap((v,i)=>v>Math.max(50,3*nominalStep)?[{startMs:points[i]!.t,endMs:points[i+1]!.t,durationMs:v}]:[]);
+  const crossesGap=(a:number,b:number)=>dataGaps.some(g=>a<g.endMs&&b>g.startMs);
   const timingJitterMs=median(intervals.map(v=>Math.abs(v-nominalStep)));
   // Interpolate all axes onto a uniform timeline before filtering. Original timestamps
   // remain the source of truth for event intervals and are reconstructed below.
@@ -71,6 +76,8 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   const axes=(['x','y','z'] as const).map(axis=>{
     const values=uniform.map(p=>p[axis]);
     const filtered=bandpass(values,fs,.8,20);
+    // Mask interpolated gaps and nearby filter transients.
+    for(let i=0;i<filtered.length;i++)if(crossesGap(uniform[i]!.t-250,uniform[i]!.t+250))filtered[i]=0;
     const rms=Math.sqrt(filtered.reduce((s,v)=>s+v*v,0)/filtered.length);
     return {axis,filtered,rms};
   }).sort((a,b)=>b.rms-a.rms);
@@ -89,9 +96,15 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     }else events.push(i);
   }
   const diffs=events.slice(1).map((v,i)=>((v-events[i]!)*nominalStep));
-  const plausible=diffs.filter(v=>v>=350&&v<=1500);
-  const shortIntervals=diffs.filter(v=>v<350).length;
-  const longIntervals=diffs.filter(v=>v>1500).length;
+  const eventTimesMs=events.map(i=>uniform[i]!.t);
+  const eventIntervals=diffs.map((durationMs,i)=>{
+    const startMs=eventTimesMs[i]!,endMs=eventTimesMs[i+1]!;
+    const status:'accepted'|'short'|'long'|'gap'=crossesGap(startMs,endMs)?'gap':durationMs<350?'short':durationMs>1500?'long':'accepted';
+    return {startMs,endMs,durationMs,status};
+  });
+  const plausible=eventIntervals.filter(v=>v.status==='accepted').map(v=>v.durationMs);
+  const shortIntervals=eventIntervals.filter(v=>v.status==='short').length;
+  const longIntervals=eventIntervals.filter(v=>v.status==='long').length;
   const intervalCoveragePercent=diffs.length?100*plausible.length/diffs.length:null;
   const med=median(plausible);
   const mad=median(plausible.map(v=>Math.abs(v-med)));
@@ -104,7 +117,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
   // Median waveform aligned to detected mechanical impulse candidates.
   // 150 ms before and 350 ms after each event, sampled at 60 Hz.
   const offsets=Array.from({length:31},(_,i)=>(i-9)/60);
-  const snippets=events.filter(index=>index>=Math.ceil(fs*.15)&&index+Math.ceil(fs*.35)<signal.length).map(index=>{
+  const snippets=events.filter(index=>index>=Math.ceil(fs*.15)&&index+Math.ceil(fs*.35)<signal.length&&!crossesGap(uniform[index]!.t-400,uniform[index]!.t+600)).map(index=>{
     return offsets.map(offset=>{
       const at=index+offset*fs, lo=Math.floor(at),hi=Math.min(signal.length-1,lo+1);
       return signal[lo]!+(signal[hi]!-signal[lo]!)*(at-lo);
@@ -167,6 +180,7 @@ export function analyzeScg(points:MotionPoint[]):ScgReport|null{
     variation!==null&&variation<18&&windowConsistency&&artifactFraction<.08&&gapFraction<.02;
   const quality:ScgReport['quality']=gapFraction>.03||artifactFraction>.15?'insufficient':candidate?'candidate':'unconfirmed';
   return {
+    dataGaps,eventTimesMs,eventIntervals,
     quality,
     explanation:quality==='candidate'
       ? 'Återkommande mekaniska impulser upptäcktes. De är INTE bekräftade hjärtslag. Kontrollera mot samtidig EKG- eller pulsmätning.'

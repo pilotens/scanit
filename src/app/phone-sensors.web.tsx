@@ -35,6 +35,62 @@ function summarizeChannel(p:MotionPoint[], low:number, high:number){
   });
   return {durationSeconds:duration,count:p.length,axes,origin:'unverified mechanical',gaps:p.slice(1).filter((q,i)=>q.t-p[i]!.t>50).length};
 }
+
+// Compare independent sensor channels on a common delivery-time grid.
+// Never bridge gaps or interpret correlation as physiological validation.
+function crossAnalyze(acc:MotionPoint[],gyro:MotionPoint[],scg:ScgReport|null){
+  if(acc.length<100||gyro.length<100)return null;
+  const start=Math.max(acc[0]!.t,gyro[0]!.t),end=Math.min(acc[acc.length-1]!.t,gyro[gyro.length-1]!.t);
+  if(end-start<15000)return null;
+  const step=20, axes=['x','y','z'] as const;
+  function grid(p:MotionPoint[]){
+    let j=0;
+    return Array.from({length:Math.floor((end-start)/step)+1},(_,i)=>{
+      const t=start+i*step;
+      while(j<p.length-2&&p[j+1]!.t<t)j++;
+      const a=p[j]!,b=p[j+1]!,dt=b.t-a.t;
+      if(dt<=0||dt>50||t<a.t||t>b.t)return null;
+      const w=(t-a.t)/dt;
+      return axes.map(k=>a[k]+w*(b[k]-a[k]));
+    });
+  }
+  const a=grid(acc),g=grid(gyro);
+  function filter(rows:(number[]|null)[],axis:number,low:number,high:number){
+    let prev:number|null=null,hp=0,lp=0,age=0;
+    const h=1/(1+2*Math.PI*low*step/1000),l=1-Math.exp(-2*Math.PI*high*step/1000);
+    return rows.map(row=>{
+      if(!row){prev=null;hp=0;lp=0;age=0;return null;}
+      const x=row[axis]!;
+      if(prev===null){prev=x;return null;}
+      hp=h*(hp+x-prev);prev=x;lp+=l*(hp-lp);age++;
+      return age*step<Math.max(500,1000/low)?null:lp;
+    });
+  }
+  function corr(x:(number|null)[],y:(number|null)[],lag:number,from:number,to:number){
+    let n=0,sx=0,sy=0,xx=0,yy=0,xy=0;
+    for(let i=from;i<to;i++){const u=x[i],v=y[i+lag];if(u==null||v==null||i+lag<from||i+lag>=to)continue;n++;sx+=u;sy+=v;xx+=u*u;yy+=v*v;xy+=u*v;}
+    const den=Math.sqrt(Math.max(0,(xx-sx*sx/n)*(yy-sy*sy/n)));
+    return {r:n>=250&&den>1e-12?(xy-sx*sy/n)/den:null,n};
+  }
+  function compare(low:number,high:number,maxLag:number){
+    const aa=axes.map((_,i)=>filter(a,i,low,high)),gg=axes.map((_,i)=>filter(g,i,low,high));
+    const mid=Math.floor(a.length/2);
+    let best:{accAxis:number;gyroAxis:number;lag:number;r:number}|null=null;
+    for(let x=0;x<3;x++)for(let y=0;y<3;y++)for(let lag=-maxLag;lag<=maxLag;lag++){
+      const {r}=corr(aa[x]!,gg[y]!,lag,0,mid);
+      if(r!==null&&(!best||Math.abs(r)>Math.abs(best.r)))best={accAxis:x,gyroAxis:y,lag,r};
+    }
+    if(!best)return null;
+    const test=corr(aa[best.accAxis]!,gg[best.gyroAxis]!,best.lag,mid,a.length);
+    return {accAxis:axes[best.accAxis],gyroAxis:axes[best.gyroAxis],lagMs:best.lag*step,trainingCorrelation:best.r,validationCorrelation:test.r,validationPairs:test.n,repeatable:test.r!==null&&Math.abs(best.r)>=.5&&Math.abs(test.r)>=.5&&Math.sign(best.r)===Math.sign(test.r)};
+  }
+  const mechanical=compare(.8,15,10),respiratory=compare(.1,.5,25);
+  const gcg=summarizeChannel(gyro,.7,3);
+  const scgHz=scg?.quality==='candidate'&&scg.medianIntervalMs?1000/scg.medianIntervalMs:null;
+  const frequencyDifferences=gcg?.axes.map(v=>({axis:v.axis,frequencyHz:v.frequencyHz,differenceHz:scgHz!==null&&v.frequencyHz!==null?Math.abs(v.frequencyHz-scgHz):null}))??[];
+  return {overlapSeconds:(end-start)/1000,gridHz:50,pairedCoverage:a.filter((v,i)=>v!==null&&g[i]!==null).length/a.length,mechanical,respiratory,scgCandidateHz:scgHz,frequencyDifferences,warning:'Exploratory correlations; thresholds unvalidated. Shared motion and delivery latency can produce agreement. No diagnosis or verified heart/respiratory rate.'};
+}
+
 type Posture = 'supine' | 'reclined45';
 type PersonalEntry = {timestamp: string; mode: 'sternum' | 'table'; rms: number; scg: ScgReport | null; referenceBpm: number | null; note: string; posture?: Posture; durationSeconds?: number};
 
@@ -66,6 +122,7 @@ export default function BrowserSensorLab() {
   const readings = useRef<MotionPoint[]>([]);
   const multi=useRef<MultiCapture>(emptyMulti());
   const [multiResult,setMultiResult]=useState<MultiCapture|null>(null);
+  const [crossResult,setCrossResult]=useState<ReturnType<typeof crossAnalyze>>(null);
   const cleanup = useRef<(() => void) | null>(null);
   const active = useRef(false);
   const stopRef = useRef<() => void>(() => {});
@@ -120,6 +177,7 @@ export default function BrowserSensorLab() {
     setCaptured([...readings.current]);
     setSpectrum(spectralResult);
     setScg(scgResult);
+    setCrossResult(crossAnalyze(readings.current,multi.current.gyro,scgResult));
     setMeasuredReference(reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null);
     setStatus(result ? result.durationSeconds < 29 ? 'Ofullständig registrering: mindre än 29 sekunder sensordata. Gör om mätningen.' : 'Mätning genomförd' : 'För få mätpunkter – prova igen');
   };
@@ -131,7 +189,7 @@ export default function BrowserSensorLab() {
     setReport(null);
     setCaptured([]);
     setSpectrum(null);
-    setScg(null);
+    setScg(null);setCrossResult(null);
     setCopyStatus('');
     setElapsed(0);
     setSensorSource('DeviceMotion');
@@ -232,6 +290,7 @@ export default function BrowserSensorLab() {
       exploratoryScg: scg,
       multimodal: multiResult ? {
         clock:'performance.now relative to common session origin; delivery timestamps, not hardware synchronization',
+        crossAnalysis:crossResult,
         accelerationStartMs:captured[0]!.t-multiResult.origin,
         gcg:{units:'degrees/s',columns:['elapsed_ms','beta','gamma','alpha'],samples:multiResult.gyro.map(p=>[p.t-multiResult.origin,p.x,p.y,p.z]),analysis:summarizeChannel(multiResult.gyro,.7,3)},
         resp:{acceleration:summarizeChannel(captured,.1,.5),rotation:summarizeChannel(multiResult.gyro,.1,.5),warning:'Candidate low-frequency motion, not validated respiration'}
@@ -311,6 +370,13 @@ export default function BrowserSensorLab() {
         <Text style={styles.body}>GCG: {multiResult.gyro.length} rotationsprover · {multiResult.gyro.length>=100?'registrerade':'otillräckliga eller saknas'}</Text>
         <Text style={styles.body}>RESP: {summarizeChannel(captured,.1,.5)?.axes.map(a=>a.axis+': '+(a.frequencyHz?.toFixed(2)??'–')+' Hz').join(' · ')??'Otillräckligt underlag'}</Text>
         <Text style={styles.caption}>Experimentella signaler. Ingen verifierad hjärt- eller andningsdiagnostik.</Text>
+      </Card>:null}
+      {crossResult ? <Card>
+        <Text style={styles.heading}>Korsanalys · SCG / GCG / RESP</Text>
+        <Text style={styles.body}>Gemensam datatäckning: {(crossResult.pairedCoverage*100).toFixed(1)} %</Text>
+        <Text style={styles.body}>Mekanisk samstämmighet: {crossResult.mechanical?.validationCorrelation?.toFixed(2)??'Otillräckligt underlag'} · {crossResult.mechanical?.repeatable?'Återkommande korrelation':'Ej bekräftad mellan halvor'}</Text>
+        <Text style={styles.body}>Långsam rörelse: {crossResult.respiratory?.validationCorrelation?.toFixed(2)??'Otillräckligt underlag'} · {crossResult.respiratory?.repeatable?'Återkommande korrelation':'Ej bekräftad mellan halvor'}</Text>
+        <Text style={styles.caption}>Korrelation kan bero på gemensam rörelse. Inte verifierad fysiologisk aktivitet.</Text>
       </Card>:null}
       {report ? <>
         {scg ? <Card>

@@ -10,6 +10,7 @@ import { summarizeRepeats, type RepeatEntry } from '@/services/sensors/scgRepeat
 import { analyzeScg, type ScgReport } from '@/services/sensors/scgAnalysis';
 import { analyzeMotionSpectrum, type SpectralReport } from '@/services/sensors/motionSpectrum';
 import { analyzeMotion, type MotionPoint, type MotionReport } from '@/services/sensors/motionAnalysis';
+import { serializeCompactMeasurement } from '@/services/sensors/measurementExport';
 
 type PermissionMotionEvent = typeof DeviceMotionEvent & { requestPermission?: () => Promise<'granted' | 'denied'> };
 const DURATION_MS = 30000;
@@ -82,7 +83,7 @@ function crossAnalyze(acc:MotionPoint[],gyro:MotionPoint[],scg:ScgReport|null){
     }
     if(!best)return null;
     const test=corr(aa[best.accAxis]!,gg[best.gyroAxis]!,best.lag,mid,a.length);
-    return {accAxis:axes[best.accAxis],gyroAxis:axes[best.gyroAxis],lagMs:best.lag*step,trainingCorrelation:best.r,validationCorrelation:test.r,validationPairs:test.n,repeatable:test.r!==null&&Math.abs(best.r)>=.5&&Math.abs(test.r)>=.5&&Math.sign(best.r)===Math.sign(test.r)};
+    return {accAxis:axes[best.accAxis]!,gyroAxis:axes[best.gyroAxis]!,lagMs:best.lag*step,trainingCorrelation:best.r,validationCorrelation:test.r,validationPairs:test.n,repeatable:test.r!==null&&Math.abs(best.r)>=.5&&Math.abs(test.r)>=.5&&Math.sign(best.r)===Math.sign(test.r)};
   }
   const mechanical=compare(.8,15,10),respiratory=compare(.1,.5,25);
   const gcg=summarizeChannel(gyro,.7,3);
@@ -115,6 +116,8 @@ export default function BrowserSensorLab() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [measuredReference, setMeasuredReference] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
+  const [measurementInfo, setMeasurementInfo] = useState<{timestamp: string; note: string} | null>(null);
+  const [manualCopy, setManualCopy] = useState<string | null>(null);
   const [repeats, setRepeats] = useState<{sternum: RepeatEntry[]; table: RepeatEntry[]}>({sternum: [], table: []});
   const [controls, setControls] = useState<{sternum?: {motion: MotionReport; spectrum: SpectralReport | null}; table?: {motion: MotionReport; spectrum: SpectralReport | null}}>({});
   const measurementMode = useRef<'sternum' | 'table'>('sternum');
@@ -165,9 +168,11 @@ export default function BrowserSensorLab() {
     const result = analyzeMotion(readings.current);
     const spectralResult = analyzeMotionSpectrum(readings.current);
     const scgResult = measurementMode.current === 'sternum' ? analyzeScg(readings.current) : null;
+    const info = {timestamp: new Date().toISOString(), note: note.slice(0,160)};
+    setMeasurementInfo(info);
     if (result) {
       const validRef = reference.trim() && Number(reference)>=35 && Number(reference)<=220 ? Number(reference) : null;
-      setHistory(previous => [...previous, {timestamp: new Date().toISOString(), mode: measurementMode.current, rms: result.variationRms, scg: scgResult, referenceBpm: validRef, note: note.slice(0,160), posture: postureRef.current, durationSeconds: result.durationSeconds}].slice(-100));
+      setHistory(previous => [...previous, {timestamp: info.timestamp, mode: measurementMode.current, rms: result.variationRms, scg: scgResult, referenceBpm: validRef, note: info.note, posture: postureRef.current, durationSeconds: result.durationSeconds}].slice(-100));
       setControls(previous => ({...previous, [measurementMode.current]: {motion: result, spectrum: spectralResult}}));
       setRepeats(previous => ({...previous, [measurementMode.current]: [...previous[measurementMode.current], {rms: result.variationRms, scg: scgResult}].slice(-5)}));
     }
@@ -191,6 +196,8 @@ export default function BrowserSensorLab() {
     setSpectrum(null);
     setScg(null);setCrossResult(null);
     setCopyStatus('');
+    setMeasurementInfo(null);
+    setManualCopy(null);
     setElapsed(0);
     setSensorSource('DeviceMotion');
     readings.current = [];
@@ -276,10 +283,11 @@ export default function BrowserSensorLab() {
     }
   };
 
-  const copyForAI = async () => {
-    if (!report || captured.length === 0) return;
-    const payload = {
-      source: 'ScanIt iPhone browser accelerometer', timestamp: new Date().toISOString(),
+  const buildExportPayload = (includeSamples = false) => {
+    if (!report || captured.length === 0 || !measurementInfo) return null;
+    return {
+      source: 'ScanIt iPhone browser accelerometer', timestamp: measurementInfo.timestamp,
+      note: measurementInfo.note,
       measurement: 'accelerationIncludingGravity', units: 'm/s²',
       caution: 'Not an ECG, heart rate, or validated clinical measurement. Do not infer diagnoses.',
       summary: report,
@@ -290,9 +298,11 @@ export default function BrowserSensorLab() {
       exploratoryScg: scg,
       multimodal: multiResult ? {
         clock:'performance.now relative to common session origin; delivery timestamps, not hardware synchronization',
+        sessionOriginMs: multiResult.origin,
+        scgClock:'Current exploratoryScg eventTimesMs, eventIntervals and dataGaps use absolute performance.now delivery timestamps; subtract sessionOriginMs for current session elapsed time only. Historical reports retain their own original clocks.',
         crossAnalysis:crossResult,
         accelerationStartMs:captured[0]!.t-multiResult.origin,
-        gcg:{units:'degrees/s',columns:['elapsed_ms','beta','gamma','alpha'],samples:multiResult.gyro.map(p=>[p.t-multiResult.origin,p.x,p.y,p.z]),analysis:summarizeChannel(multiResult.gyro,.7,3)},
+        gcg:{units:'degrees/s',columns:['elapsed_ms','beta','gamma','alpha'],sampleCount:multiResult.gyro.length,...(includeSamples ? {samples:multiResult.gyro.map(p=>[p.t-multiResult.origin,p.x,p.y,p.z])} : {}),analysis:summarizeChannel(multiResult.gyro,.7,3)},
         resp:{acceleration:summarizeChannel(captured,.1,.5),rotation:summarizeChannel(multiResult.gyro,.1,.5),warning:'Candidate low-frequency motion, not validated respiration'}
       }:null,
       harmonicChecks: scg?.harmonicChecks ?? null,
@@ -300,15 +310,46 @@ export default function BrowserSensorLab() {
       repeatedMeasurements: repeats,
       personalHistory: history,
       repeatability: summarizeRepeats(repeats[measurementMode.current]),
-      samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))]),
+      ...(includeSamples ? {samples: captured.map(p => [Math.round(p.t - captured[0]!.t), Number(p.x.toFixed(5)), Number(p.y.toFixed(5)), Number(p.z.toFixed(5))])} : {}),
       columns: ['elapsed_ms','ax','ay','az'],
       analysis_request: 'Beskriv mätkvalitet, rörelseartefakter och återkommande mönster i SCG, GCG och RESP. Jämför tidsserier med gemensam sessionsreferens; ange osäker synkronisering. Ange tydligt vad som INTE kan utläsas ur dessa accelerometerdata. Hitta inte på puls, EKG eller diagnos.'
     };
+  };
+
+  const copyForAI = async () => {
+    const payload = buildExportPayload();
+    if (!payload) return;
+    const text = serializeCompactMeasurement(payload);
+    setManualCopy(null);
     try {
-      await navigator.clipboard.writeText(JSON.stringify(payload));
-      setCopyStatus('Mätdata kopierade. Klistra in i valfri AI-chatt.');
+      await navigator.clipboard.writeText(text);
+      setCopyStatus(`Kort resultat kopierat (${text.length.toLocaleString('sv-SE')} tecken). Klistra in i AI-chatten.`);
     } catch {
-      setCopyStatus('Kopiering blockerades av Safari. Kontrollera urklippsbehörighet.');
+      setManualCopy(text);
+      setCopyStatus('Automatisk kopiering gick inte. Markera och kopiera det korta resultatet nedan.');
+    }
+  };
+
+  const downloadFullResult = () => {
+    const payload = buildExportPayload(true);
+    if (!payload) return;
+    let url: string | null = null;
+    const link = document.createElement('a');
+    try {
+      const json = JSON.stringify({...payload, exportType: 'full_measurement', exportedAt: new Date().toISOString()});
+      const blob = new Blob([json], {type: 'application/json;charset=utf-8'});
+      url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = `scanit-${payload.timestamp.replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(link);
+      link.click();
+      setCopyStatus('JSON-filen är redo att sparas. Bifoga den i chatten för analys av hela tidsserien eller ett visst ögonblick.');
+    } catch {
+      setCopyStatus('Kunde inte skapa JSON-filen. Öppna ScanIt i Safari och försök igen.');
+    } finally {
+      link.remove();
+      // Allow Safari to finish consuming the object URL before releasing it.
+      if (url) { const downloadUrl = url; window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000); }
     }
   };
 
@@ -333,6 +374,21 @@ export default function BrowserSensorLab() {
         {wakeStatus ? <Text style={styles.caption}>{wakeStatus}</Text> : null}
         {running ? <AppButton label="Avsluta mätning" secondary onPress={stop} /> : countdown !== null ? <Text style={styles.body}>Vänta tills nedräkningen är klar.</Text> : <AppButton label="Starta verklig mätning" onPress={start} />}
       </Card>
+
+      {report ? <Card>
+        <Text style={styles.heading}>Resultat att dela</Text>
+        <Text style={styles.resultTitle}>{report.qualityText}</Text>
+        <Text style={styles.body}>{report.durationSeconds.toFixed(1)} sekunder · {report.count} prover · {report.samplingHz.toFixed(1)} Hz</Text>
+        <Text style={styles.body}>Kopiera en kort sammanfattning av den senaste mätningen: signalkvalitet och analys av SCG, GCG och RESP.</Text>
+        <AppButton label="Kopiera kort resultat" onPress={copyForAI} />
+        <AppButton label="Spara fullständig JSON" secondary onPress={downloadFullResult} />
+        <Text style={styles.caption}>JSON-filen innehåller alla registrerade sensorprover och sparad mäthistorik. Bifoga filen om du vill analysera ett visst ögonblick, till exempel vid 16 sekunder. Ingen data skickas automatiskt.</Text>
+        {copyStatus ? <Text style={styles.status} accessibilityLiveRegion="polite">{copyStatus}</Text> : null}
+        {manualCopy ? <>
+          <Text style={styles.body}>Tryck i fältet och välj Markera allt → Kopiera.</Text>
+          <TextInput value={manualCopy} multiline selectTextOnFocus showSoftInputOnFocus={false} onChangeText={() => {}} accessibilityLabel="Kort resultat att kopiera manuellt" style={[styles.input, styles.copyField]} />
+        </> : null}
+      </Card> : null}
 
       <Card>
         <Text style={styles.heading}>Min personliga mäthistorik</Text>
@@ -426,12 +482,6 @@ export default function BrowserSensorLab() {
           <Text style={styles.heading}>För bättre mätning</Text>
           <Text style={styles.body}>Använd samma placering varje gång, låt telefonen vila helt och undvik rörelse omkring den. Upprepa gärna mätningen och jämför kurvornas form.</Text>
         </Card>
-        <Card>
-          <Text style={styles.heading}>Dela mätningen för AI-analys</Text>
-          <Text style={styles.body}>Kopiera hela accelerometerserien, tidsstämplar och kvalitetsanalys i JSON-format. Ingen data skickas automatiskt.</Text>
-          <AppButton label="Kopiera mätdata till AI" onPress={copyForAI} />
-          {copyStatus ? <Text style={styles.status}>{copyStatus}</Text> : null}
-        </Card>
         <Card muted>
           <Text style={styles.heading}>Tekniska detaljer</Text>
           <Text style={styles.body}>{report.count} prover · {report.samplingHz.toFixed(0)} prover/sekund · {report.gaps} dataluckor</Text>
@@ -455,5 +505,7 @@ const styles = StyleSheet.create({
   chart: { height: 110, flexDirection: 'row', alignItems: 'flex-end', gap: 2, paddingVertical: 8 },
   bar: { flex: 1, backgroundColor: colors.primary, borderRadius: 2 },
   input: { borderWidth: 1, borderColor: '#a4b5bb', borderRadius: 8, padding: 12, fontSize: 16, color: colors.ink },
+  copyField: {height: 160, textAlignVertical: 'top'},
   caption: { color: colors.inkMuted, fontSize: 12, lineHeight: 18 },
 });
+

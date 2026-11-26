@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "mvp:check": "node scripts/mvp-check.mjs"
+    "mvp:check": "node scripts/mvp-check.mjs && npm run test:exports",
+    "test:exports": "node --experimental-strip-types scripts/check-measurement-export.mjs"
   },
   "dependencies": {
     "expo": "~57.0.8",
@@ -36,3 +37,4 @@
     "typescript": "~6.0.3"
   }
 }
+
